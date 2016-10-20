@@ -1,9 +1,11 @@
 <%args>
+@curation_response_rate
 @annotation_types_by_year
 @annotation_stats
 @per_pub_stats_table
 @per_pub_5_year_stats
 @curated_stats
+@new_curator_stats
 $db_creation_datetime
 </%args>
 
@@ -208,6 +210,18 @@ $db_creation_datetime
 </div>
 
 <div class="curs-box">
+  <div class="curs-box-title" id="community-progress">Community annotation response rate</div>
+<div class="curs-box-body row">
+<div class="col-sm-7 col-md-7">
+  To date <% $all_community_sessions %> publications have been assigned
+  to community members for curation.  <% $accepted_sessions %> are finished
+  and are either in the main PomBase database or are currently being checked
+  by the PomBase curators.  That's a response rate of <% $response_rate %>%.
+</div>
+</div>
+</div>
+
+<div class="curs-box">
   <div class="curs-box-title" id="pubs">Curated vs. uncurated by publication date</div>
   <div class="curs-box-body row">
   <div class="col-sm-6 col-md-6">
@@ -279,6 +293,41 @@ annotations contributed by authors.
   <stacked-graph chart-labels="curationStatusLabels" chart-data="curationStatusData"
                  chart-series="Uncurated|Admin curated|Community curated">
   </stacked-graph>
+</div>
+</div>
+
+<div class="curs-box">
+  <div class="curs-box-title" id="newcurators">New curators per year</div>
+<div class="curs-box-body row">
+<div class="col-sm-7 col-md-7">
+  <p>
+This table shows the number of first time community curators per year.
+  </p>
+</div>
+<div class="col-sm-5 col-md-5">
+  <table style="font-size: 105%" class="list">
+    <thead>
+      <tr>
+        <th>
+          Year
+        </th>
+        <th>
+          Number
+        </th>
+      </tr>
+    </thead>
+% for my $row (@new_curator_stats) {
+    <tr>
+      <td>
+        <% $row->[0] %>
+      </td>
+      <td>
+        <% $row->[1] %>
+      </td>
+    </tr>
+% }
+  </table>
+</div>
 </div>
 </div>
 
@@ -473,4 +522,6 @@ map {
 
 my $per_pub_5_year_stats_js = Data::JavaScript::Anon->anon_dump(\@transposed_per_pub_5_year_stats);
 
+my ($accepted_sessions, $all_community_sessions) = @curation_response_rate;
+my $response_rate = int(1000.0 * $accepted_sessions / $all_community_sessions) / 10.0;
 </%init>

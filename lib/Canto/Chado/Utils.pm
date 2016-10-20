@@ -74,6 +74,103 @@ CREATE INDEX pub_dates_uniquename_index ON pub_dates(uniquename);
 EOF
 }
 
+# returns the number of completed (but not necessarily approved) sessions and the number of
+# sessions with a community curator
+sub curation_response_rate
+{
+  my $track_schema = shift;
+
+  my $dbh = $track_schema->storage()->dbh();
+  my $query = <<"EOF";
+
+  SELECT count(distinct(curs_id))
+FROM curs
+JOIN curs_curator cc ON cc.curs = curs_id
+JOIN person p ON p.person_id = cc.curator
+JOIN cvterm ROLE ON p.ROLE = ROLE.cvterm_id
+WHERE ROLE.name = 'user' AND curs_id IN
+    (SELECT curs
+     FROM cursprop p, cvterm t
+     WHERE t.cvterm_id = p.type
+       AND t.name = 'annotation_status'
+       AND (p.value = 'NEEDS_APPROVAL' OR p.value = 'APPROVAL_IN_PROGRESS' OR p.value = 'APPROVED'));
+EOF
+
+  my $sth = $dbh->prepare($query);
+  $sth->execute() or die "Couldn't execute: " . $sth->errstr;
+
+  my ($completed_community_session_count) = $sth->fetchrow_array();
+
+  $query = <<"EOF";
+SELECT count(distinct(curs_id))
+FROM cursprop cp
+JOIN curs ON curs.curs_id = cp.curs
+JOIN curs_curator cc ON cc.curs = cp.curs
+JOIN person p ON p.person_id = cc.curator
+JOIN cvterm ROLE ON p.ROLE = ROLE.cvterm_id
+WHERE ROLE.name = 'user';
+EOF
+
+  $sth = $dbh->prepare($query);
+  $sth->execute() or die "Couldn't execute: " . $sth->errstr;
+
+  my ($total_community_session_count) = $sth->fetchrow_array();
+
+  return ($completed_community_session_count, $total_community_session_count);
+}
+
+sub new_curators_per_year
+{
+  my $chado_schema = shift;
+
+  my $chado_dbh = $chado_schema->storage()->dbh();
+
+  my %stats = ();
+
+  my $query = <<'EOF';
+WITH pub_curator_roles AS
+  (SELECT uniquename,
+     (SELECT value
+      FROM pubprop
+      JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
+      WHERE pubprop.pub_id = pub.pub_id
+        AND ppt.name = 'canto_curator_role') AS ROLE,
+
+     (SELECT value
+      FROM pubprop
+      JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
+      WHERE pubprop.pub_id = pub.pub_id
+        AND ppt.name = 'canto_curator_email') AS curator,
+          extract(YEAR
+                  FROM
+                    (SELECT value
+                     FROM pubprop
+                     JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
+                     WHERE pubprop.pub_id = pub.pub_id
+                       AND ppt.name = 'canto_approved_date')::TIMESTAMP) AS approved_year
+   FROM pub),
+   curator_first_year AS
+  (SELECT DISTINCT curator, min(approved_year) AS first_year
+   FROM pub_curator_roles
+   WHERE ROLE = 'community' AND approved_year IS NOT NULL
+   GROUP BY curator)
+SELECT count(curator), first_year
+FROM curator_first_year
+GROUP BY first_year
+ORDER BY first_year;
+EOF
+  my $sth = $chado_dbh->prepare($query);
+  $sth->execute() or die "Couldn't execute: " . $sth->errstr;
+
+  my @rows = ();
+
+  while (my ($year, $count) = $sth->fetchrow_array()) {
+    push @rows, [$year, $count];
+  }
+
+  return @rows;
+}
+
 sub annotation_types_by_year
 {
   my $chado_schema = shift;
