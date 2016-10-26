@@ -273,7 +273,6 @@ sub sessions_by_curator_email
   my $curator_email = shift;
 
   my $schema = $self->schema();
-  my $curator_rs = $schema->resultset('Person');
   my $curs_curator_rs =
     $self->_get_current_curator_row_rs()->search({ 'lower(curator.email_address)' => lc $curator_email },
                                                  {
