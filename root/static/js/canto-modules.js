@@ -13,8 +13,8 @@ canto.config(['$compileProvider', function ($compileProvider) {
 
 canto.config(['ChartJsProvider', function (ChartJsProvider) {
   ChartJsProvider.setOptions({ chartColors : [
-      '#DCDCDC', // light grey
       '#90A0CD', // blue
+      '#BCBCBC', // light grey
       '#F7464A', // red
       '#46BFBD', // green
       '#FDB45C', // yellow
@@ -178,7 +178,7 @@ canto.filter('encodeAlleleSymbols', function () {
     if (item == null) {
       return null;
     }
-    return item.replace(/(delta)\b/g, '&Delta;');
+    return item.replace(/delta/g, '&Delta;');
   };
 });
 
