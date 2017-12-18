@@ -1,6 +1,7 @@
 # Canto config file  -*- conf -*-
 name: Canto
-long_name: Community curation application
+long_name: Curation application for PHI-base, the Pathogen-Host Interactions database
+
 
 # the name of the organisation running this Canto - shown in various places
 # in the user interface
@@ -1811,7 +1812,7 @@ help_text:
     docs_path: "genetic_interaction_annotation"
 
 contact_email:
-  address: "set_me@localhost"
+  address: "contact@phi-base.org"
 
 external_links:
   gene:

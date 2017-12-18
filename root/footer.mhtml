@@ -5,7 +5,7 @@
 % }
 
 % if ($c->debug()) {
-<script src="<% $c->uri_for('/static/js/jquery-1.8.3.js') %>"></script>
+<script src="<% $c->uri_for('/static/js/jquery-3.2.1.js') %>"></script>
 <script src="<% $c->uri_for('/static/js/jquery-ui-1.9.2.custom.js') %>"></script>
 <script src="<% $c->uri_for('/static/js/jquery.validate-1.9.0.js') %>"></script>
 <script src="<% $c->uri_for('/static/js/angular-1.5.3.js') %>"></script>
