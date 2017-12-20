@@ -1,7 +1,6 @@
 # Canto config file  -*- conf -*-
 name: Canto
-long_name: Curation application for PHI-base, the Pathogen-Host Interactions database
-
+long_name: CONFIGURE_IN_CANTO_DEPLOY.YAML
 
 # the name of the organisation running this Canto - shown in various places
 # in the user interface

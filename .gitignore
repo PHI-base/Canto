@@ -7,7 +7,6 @@ Makefile.old
 pipeline.yaml
 pipeline-example-config.yaml
 t/scratch/
-canto_deploy.yaml
 canto_test.yaml
 local*
 nytprof*

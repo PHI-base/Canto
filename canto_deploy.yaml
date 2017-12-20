@@ -1,0 +1,20 @@
+---
+Model::TrackModel:
+  connect_info:
+    - dbi:SQLite:dbname=/data/track.sqlite3
+  schema_class: Canto::TrackDB
+data_directory: /data
+email:
+  from_address: contact@phi-base.org
+  admin_address: henry.osim@rothamsted.ac.uk
+  noreply_address: contact@phi-base.org
+database_name: Phi-Canto
+long_name: Curation application for PHI-base, the Pathogen-Host Interactions database
+
+implementation_classes:
+  gene_adaptor: Canto::UniProt::GeneLookup
+  ontology_adaptor: Canto::Track::OntologyLookup
+  status_adaptor: Canto::Track::StatusStorage
+  person_adaptor: Canto::Track::PersonLookup
+  pubs_adaptor: Canto::Track::PubsLookup
+
