@@ -67,7 +67,8 @@ sub _parse_results
   my @ret = ();
 
   for my $entry (@{$res_hash->{entry}}) {
-    my $name = _content($entry->{name}->[0]);
+    my $name = _content($entry->{gene}->[0]->{name}->[0]);
+
     my $full_name =
       _content($entry->{protein}->[0]->{recommendedName}->[0]->{fullName}->[0]);
 
