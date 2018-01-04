@@ -9,7 +9,7 @@ email:
   from_address: contact@phi-base.org
   admin_address: henry.osim@rothamsted.ac.uk
   noreply_address: contact@phi-base.org
-database_name: Phi-Canto
+database_name: PHI-base
 long_name: Curation application for PHI-base, the Pathogen-Host Interactions database
 
 implementation_classes:
@@ -18,3 +18,11 @@ implementation_classes:
   status_adaptor: Canto::Track::StatusStorage
   person_adaptor: Canto::Track::PersonLookup
   pubs_adaptor: Canto::Track::PubsLookup
+
+messages:
+  gene_upload:
+    systematic_identifier_desc: UniProt identifier
+    primary_name_desc: ~
+    examples:
+      gene_identifier: 'Q00909'
+      gene_name: ~

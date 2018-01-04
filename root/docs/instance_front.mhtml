@@ -33,7 +33,7 @@ by viewing our help pages:
 <div style="padding: 10px 0 20px 0">
 <a href="<% $demo_url %>" class="btn btn-primary visit">Demo ...</a>
 <p>
-  Or try the demo version of Canto:
+  Or try the demo version of PHI-Canto:
 </p>
 </div>
 % }
