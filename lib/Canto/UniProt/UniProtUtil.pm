@@ -74,9 +74,7 @@ sub _parse_results
 
     my @synonyms = ();
 
-    if (defined $entry->{gene}->[0]->{name}) {
-    }
-#     push @synonyms, map { _content($_) } @{$entry->{gene}->[0]->{name}};
+
     push @synonyms, map { _content($_) } @{$entry->{gene}->[0]->{name}};
     my $gene_name = shift @synonyms;
 
