@@ -6,17 +6,34 @@
                 Name: <input type="text" title="Click to edit (optional) genotype name" href="#"
                              placeholder="short genotype name (optional) ..."
                              size="50"
-                             ng-model="data.genotypeName" />
+                             ng-model="data.genotypeName"/>
                 <help-icon key="genotype_edit_name_input"></help-icon>
             </div>
             <div>
                 Background: <input type="text" title="Click to edit (options) genotype background" href="#"
                                    placeholder="genotype background (optional) ..."
                                    size="50"
-                                   ng-model="data.genotypeBackground" />
+                                   ng-model="data.genotypeBackground"/>
                 <help-icon key="genotype_edit_background_input"></help-icon>
             </div>
         </div>
+
+            <div class="col-sm-7 col-md-7">
+                <br>
+                <div>
+                    Strains:
+                    <!--<div ng-app="myApp" ng-controller="myCtrl">-->
+                    <!--<select ng-model="selectedName" ng-options="item for item in names"></select>-->
+                    <!--</div>-->
+                    <select name="" id="">
+                        <option value="volvo">GZ3639</option>
+                        <option value="saab">PH-1</option>
+                        <option value="mercedes">Z3936</option>
+                        <option value="audi">16A</option>
+                    </select>
+                </div>
+            </div>
+
         <div class="col-sm-5 col-md-5">
             <div ng-show="editOrDuplicate == 'edit' && data.annotationCount > 0"
                  class="curs-right-info-message">
@@ -54,20 +71,10 @@
                         <td>{{gene.primary_identifier}}</td>
                         <td>
                             <button class="btn btn-primary btn-xs"
-                                    ng-click="openAlleleEditDialog({gene: gene})">Add allele ..</button>
+                                    ng-click="openAlleleEditDialog({gene: gene})">Add allele ..
+                            </button>
                         </td>
-                        <td>
-                            <!--<div ng-app="myApp" ng-controller="myCtrl">-->
-                                <!--<select ng-model="selectedName" ng-options="item for item in names"></select>-->
-                            <!--</div>-->
 
-                            <select name="" id="">
-                                <option value="volvo">GZ3639</option>
-                                <option value="saab">PH-1</option>
-                                <option value="mercedes">Z3936</option>
-                                <option value="audi">16A</option>
-                            </select>
-                        </td>
                     </tr>
                     </tbody>
                 </table>
@@ -117,9 +124,11 @@
     </div>
     <button type="submit" class="btn btn-primary curs-finish-button"
             title="{{ isValid() ? 'Store changes ' : (wildTypeCheckPasses ? 'At least one allele for each gene is required' : 'Wild type allele needs a non wild type product level') }}"
-            ng-click="store()" ng-disabled="!isValid()">Finish</button>
+            ng-click="store()" ng-disabled="!isValid()">Finish
+    </button>
     <button type="submit" class="btn btn-warning curs-finish-button"
-            ng-click="cancel()">Cancel</button>
+            ng-click="cancel()">Cancel
+    </button>
     <div class="upload-genes-link">
         <a ng-click="openSingleGeneAddDialog()">Add another gene from the paper ...</a>
     </div>
