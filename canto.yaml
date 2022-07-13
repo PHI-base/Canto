@@ -1,6 +1,6 @@
 # Canto config file  -*- conf -*-
 name: Canto
-long_name: CONFIGURE_IN_CANTO_DEPLOY.YAML
+long_name: Community curation application
 
 # the name of the organisation running this Canto - shown in various places
 # in the user interface
@@ -2296,7 +2296,7 @@ help_text:
       of what cells (strain, genotype, constructs, etc.) are used.
 
 contact_email:
-  address: "contact@phi-base.org"
+  address: "set_me@localhost"
 
 external_links:
   gene:
