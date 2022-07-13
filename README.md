@@ -1,13 +1,43 @@
-Canto: The PomBase community curation tool
-===================================
+PHI-Canto
+=========
 
-This repository is now **archived**, and is no longer maintained. For all further development of the Canto tool, see https://github.com/pombase/canto.
+PHI-Canto is a web application used for the annotation of pathogen–host
+interactions. PHI-Canto is an extension of Canto, a genome annotation tool
+developed and maintained by [PomBase](https://www.pombase.org/). PHI-Canto is
+currently used by [PHI-base](http://www.phi-base.org/) to assist with curation
+of pathogen–host literature.
 
-Canto is web based genome annotation tool.
+Note that PHI-Canto shares almost all of its source code with Canto.
+Development on PHI-Canto is managed on the Canto repository on the PomBase
+GitHub organization ([pombase/canto](https://github.com/pombase/canto)). All
+issues and pull requests related to PHI-Canto should be directed to the
+[Canto issue tracker](https://github.com/pombase/canto/issues). This repository
+is used primarily to allow PHI-Canto's source code to be cited directly in
+publications.
 
-Visit https://curation.pombase.org/ for more information.
+Installation
+------------
 
-Installation instructions are in the admin documentation:
-  https://curation.pombase.org/docs/canto_admin
+PHI-Canto runs in a Docker container, so Docker must be installed (see
+[instructions](https://docs.docker.com/engine/install/)).
 
-[![Canto tests](https://github.com/pombase/canto/workflows/Canto%20tests/badge.svg)](https://github.com/pombase/canto/actions)
+The following commands will download PHI-Canto's source code and set up the
+environment:
+
+```sh
+# Note that the path to the canto-space directory cannot contain spaces.
+mkdir canto-space
+cd canto-space
+mkdir data import_export logs
+
+git clone https://github.com/PHI-base/canto.git
+```
+Run the following command to create a database for PHI-Canto and generate the
+main configuration file (`canto_deploy.yaml`).
+```sh
+./canto/script/canto_start_docker --initialise /data
+```
+Run the following command from the `canto-docker` folder to start PHI-Canto:
+```sh
+./canto/script/canto_start_docker
+```
