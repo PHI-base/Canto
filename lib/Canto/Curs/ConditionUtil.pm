@@ -38,6 +38,8 @@ under the same terms as Perl itself.
 use strict;
 use warnings;
 
+use Canto::Config;
+
 =head2 get_conditions_with_names
 
  Usage   : my @cond_data = get_conditions_with_names($ontology_lookup, [@conditions]);
@@ -46,11 +48,11 @@ use warnings;
  Args    : $ontology_lookup - An OntologyLookup object
            $conditions_ref  - a reference to an array of strings, each string
                               is a condition name or ontology ID.
-                              eg. ['PECO:0000137', 'rich medium']
+                              eg. ['FYECO:0000137', 'rich medium']
  Return  : an array of hashes of the form:
-             [ { term_id => 'PECO:0000137', name => 'glucose rich medium' },
+             [ { term_id => 'FYECO:0000137', name => 'glucose rich medium' },
                { name => 'rich medium' } ]
-           PECO IDs are looked up to get the term name.  If the input element
+           FYECO IDs are looked up to get the term name.  If the input element
            is not an ID, assume that condition is free text from the user to
            be fixed by curators later.
 
@@ -79,7 +81,7 @@ sub get_conditions_with_names
       $ret_val;
     } else {
       # some conditions are just free text if the user couldn't find the
-      # appropriate PECO term
+      # appropriate FYECO term
       { name => $term_name_or_id };
     }
   } @$conditions;
@@ -123,7 +125,9 @@ sub _get_id_from_name
   my $ontology_lookup = shift;
   my $name = shift;
 
-  my $result = $ontology_lookup->lookup_by_name(ontology_name => 'phenotype_condition',
+  my $config = Canto::Config::get_config();
+
+  my $result = $ontology_lookup->lookup_by_name(ontology_name => $config->{phenotype_condition_namespace},
                                                 term_name => $name);
   if (defined $result) {
     return $result->{id};
@@ -142,7 +146,7 @@ sub _get_id_from_name
                               is a condition name
                               eg. ['glucose rich medium', 'really cold and dark']
  Return  : an array of hashes of the form:
-             [ { term_id => 'PECO:0000137', name => 'glucose rich medium' },
+             [ { term_id => 'FYECO:0000137', name => 'glucose rich medium' },
                { name => 'really cold and dark' } ]
            the conditions are looked up by term name.  If the input element
            is not a term name, assume that condition is free text from the user to

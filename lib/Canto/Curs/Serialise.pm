@@ -40,12 +40,14 @@ the Free Software Foundation, either version 3 of the License, or
 use strict;
 use warnings;
 use Carp;
+use feature 'state';
 
 use JSON;
 use Clone qw(clone);
 use Data::Rmap ':all';
 
 use Canto::Track::CuratorManager;
+use Canto::Track;
 
 sub _get_metadata_value
 {
@@ -65,24 +67,56 @@ sub _get_metadata
   my $config = shift;
   my $track_schema = shift;
   my $curs_schema = shift;
+  my $options = shift;
 
-  confess() unless defined $curs_schema;
+  confess("curs_schema not defined") unless defined $curs_schema;
 
   my @results = $curs_schema->resultset('Metadata')->all();
+
+  my $curator_name_re = qr/(curator|approver|initial_curator|first_contact)_name$/;
 
   my %ret = map {
     my $key = $_->key();
     $key = "canto_session" if $key eq "curs_key";
 
     ($key, _get_metadata_value($curs_schema, $_->key(), $_->value() ))
+  } grep {
+    my $key = $_->key();
+    $key !~ /email$/ &&
+      ($options->{export_curator_names} ||
+       $key !~ /$curator_name_re/)
   } @results;
 
-  my $cursprops_rs =
-    $track_schema->resultset('Curs')->find({ curs_key => $ret{canto_session} })
-                 ->cursprops();
+  if (!$ret{canto_session}) {
+    warn "can't for curs_key in CursDB metadata\n";
+    confess();
+  }
+
+  my $curs_obj =
+    $track_schema->resultset('Curs')->find({ curs_key => $ret{canto_session} });
+
+  if (!defined $curs_obj) {
+    warn "can't find Curs object for ", $ret{canto_session}, " in TrackDB\n";
+    confess();
+  }
+
+  my $cursprops_rs = $curs_obj->cursprops();
 
   while (defined (my $prop = $cursprops_rs->next())) {
-    $ret{$prop->type()->name()} = $prop->value();
+    my $prop_type_name = $prop->type()->name();
+
+    next if $prop_type_name =~ /email$/;
+
+    next if !$options->{export_curator_names} &&
+      $prop_type_name && $prop_type_name =~ /$curator_name_re/;
+
+    my $prop_value = $prop->value();
+
+    if ($prop_type_name eq 'link_sent_to_curator_date' &&
+          !defined $ret{first_sent_to_curator_date}) {
+      $ret{first_sent_to_curator_date} = $prop_value;
+    }
+    $ret{$prop_type_name} = $prop_value;
   }
 
   my $curator_manager =
@@ -92,12 +126,50 @@ sub _get_metadata
       $known_as, $accepted_date, $community_curated) =
     $curator_manager->current_curator($ret{canto_session});
 
-  $ret{curator_name} = $current_submitter_name;
-  $ret{curator_email} = $current_submitter_email;
+  my @all_curators = $curator_manager->session_curators($ret{canto_session});
+
+  if ($options->{export_curator_names}) {
+    $ret{initial_curator_name} = $all_curators[0]->[1];
+
+    if (defined $current_submitter_name) {
+      $current_submitter_name =~ s/\s+$//;
+      $current_submitter_name =~ s/^\s+//;
+
+      $ret{curator_name} = $current_submitter_name;
+
+      if (@all_curators > 1) {
+        my %seen_prev_curator_name = ($current_submitter_name, 1);
+        $ret{previous_curators} =
+          [map {
+            my ($prev_email_address, $prev_curator_name) = @$_;
+            $prev_curator_name =~ s/\s+$//;
+            $prev_curator_name =~ s/^\s+//;
+            if ($seen_prev_curator_name{$prev_curator_name}) {
+              ();
+            } else {
+              $seen_prev_curator_name{$prev_curator_name} = 1;
+              {
+                curator_name => $prev_curator_name,
+              }
+            }
+          } @all_curators];
+      }
+    }
+  }
+
   $ret{curator_role} = $community_curated ? 'community' : $config->{database_name};
   $ret{curation_accepted_date} = $accepted_date;
 
   return \%ret;
+}
+
+sub _get_metagenotype_by_id
+{
+  my $schema = shift;
+  my $metagenotype_id = shift;
+
+  return $schema->resultset('Metagenotype')
+    ->find({ metagenotype_id => $metagenotype_id });
 }
 
 sub _get_annotations
@@ -105,8 +177,12 @@ sub _get_annotations
   my $config = shift;
   my $track_schema = shift;
   my $schema = shift;
+  my $options = shift;
 
   die "no schema" unless $schema;
+
+  state $ontology_lookup = Canto::Track::get_adaptor($config, 'ontology');
+  state $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
 
   my $rs = $schema->resultset('Annotation');
 
@@ -124,8 +200,12 @@ sub _get_annotations
                 primary_identifier => $_->{primary_identifier},
               });
 
-            $interacting_gene->organism()->full_name() . ' ' .
-              $_->{primary_identifier};
+            my $interacting_taxonid = $interacting_gene->organism()->taxonid();
+            my $organism_details =
+              $organism_lookup->lookup_by_taxonid($interacting_taxonid);
+            my $full_name = $organism_details->{full_name};
+
+            $full_name . ' ' . $_->{primary_identifier};
           } @{$extra_data{interacting_genes}}
         ]
     }
@@ -150,6 +230,7 @@ sub _get_annotations
     );
 
     if (defined $data{curator}) {
+      delete $data{email};
       if (defined $data{curator}->{community_curated}) {
         if ($data{curator}->{community_curated}) {
           # make sure that we have "true" in the JSON output, not "1"
@@ -158,20 +239,21 @@ sub _get_annotations
           $data{curator}->{community_curated} = JSON::false;
         }
       } else {
-        my $metadata = _get_metadata($track_schema, $schema);
+        my $metadata = _get_metadata($config, $track_schema, $schema, $options);
         die "community_curated not set for annotation ",
           $annotation->annotation_id(), " in session ",
-          $metadata->{curs_key};
+          $metadata->{canto_session};
       }
     } else {
-      my $metadata = _get_metadata($track_schema, $schema);
+      my $metadata = _get_metadata($config, $track_schema, $schema, $options);
       die "community_curated not set for annotation ",
         $annotation->annotation_id(), " in session ",
-        $metadata->{curs_key};
+        $metadata->{canto_session};
     }
 
-    my $gene = _get_annotation_gene($schema, $annotation);
+    my $gene = _get_annotation_gene($organism_lookup, $schema, $annotation);
     my $genotype = _get_annotation_genotype($schema, $annotation);
+    my $metagenotype = _get_annotation_metagenotype($schema, $annotation);
 
     if ($gene) {
       $data{gene} = $gene;
@@ -179,13 +261,28 @@ sub _get_annotations
     if ($genotype) {
       $data{genotype} = $genotype;
     }
+    if ($metagenotype) {
+      $data{metagenotype} = $metagenotype;
+    }
 
     rmap_hash {
       my $current = $_;
+
       if (exists $current->{email}) {
-        # this is a curator section - don't modify
+        # curator section
+        delete $current->{email};
+        if (!$options->{export_curator_names}) {
+          delete $current->{name};
+        }
         cut();
       }
+
+      delete $current->{curator_email};
+
+      if (!$options->{export_curator_names}) {
+        delete $current->{curator_name};
+      }
+
       for my $key (keys %$current) {
         my $value = $current->{$key};
         if (defined $value) {
@@ -205,8 +302,35 @@ sub _get_annotations
 
       map {
         my $extension_part = $_;
+
         my $data_clone = clone \%data;
         $data_clone->{extension} = $extension_part;
+
+        map {
+          my $extension_bit = $_;
+
+          if (defined $extension_bit->{rangeType}) {
+            if (lc $extension_bit->{rangeType} eq 'metagenotype') {
+              my $metagenotype =
+                _get_metagenotype_by_id($schema, $extension_bit->{rangeValue});
+
+              if ($metagenotype) {
+                $extension_bit->{rangeValue} = $metagenotype->identifier();
+              } else {
+                $extension_bit->{rangeValue} = "MISSING_METAGENOTYPE";
+              }
+
+              my %metagenotype_details =
+                Canto::Curs::Utils::make_metagenotype_details($schema, $metagenotype,
+                                                              $config,
+                                                              $ontology_lookup,
+                                                              $organism_lookup);
+
+              $extension_bit->{rangeDisplayName} =
+                $metagenotype_details{metagenotype_display_name};
+            }
+          }
+        } @$extension_part;
 
         push @ret, $data_clone
       } @$extension;
@@ -218,6 +342,7 @@ sub _get_annotations
 
 sub _get_annotation_gene
 {
+  my $organism_lookup = shift;
   my $schema = shift;
   my $annotation = shift;
 
@@ -225,7 +350,10 @@ sub _get_annotation_gene
   my @ret = ();
 
   while (defined (my $gene = $rs->next())) {
-    my $organism_full_name = $gene->organism()->full_name();
+    my $taxonid = $gene->organism()->taxonid();
+    my $organism_details = $organism_lookup->lookup_by_taxonid($taxonid);
+    my $organism_full_name = $organism_details->{full_name};
+
     push @ret, $organism_full_name . ' ' . $gene->primary_identifier();
   }
 
@@ -240,53 +368,80 @@ sub _get_annotation_gene
 
 sub _get_genes
 {
+  my $organism_lookup = shift;
   my $schema = shift;
 
   my $rs = $schema->resultset('Gene');
   my %ret = ();
 
   while (defined (my $gene = $rs->next())) {
-    my $organism_full_name = $gene->organism()->full_name();
+    my $taxonid = $gene->organism()->taxonid();
+    my $organism_details = $organism_lookup->lookup_by_taxonid($taxonid);
+    my $organism_full_name = $organism_details->{full_name};
+
     my %gene_data = (
-      organism => $organism_full_name,
       uniquename => $gene->primary_identifier(),
     );
-    my $gene_key =
-      $organism_full_name . ' ' . $gene->primary_identifier();
+
+    my $gene_key;
+
+    if ($organism_full_name) {
+      $gene_key = $organism_full_name . ' ' . $gene->primary_identifier();
+      $gene_data{organism} = $organism_full_name;
+    } else {
+      $gene_key = $gene->primary_identifier();
+    }
+
     $ret{$gene_key} = { %gene_data };
   }
 
   return %ret;
 }
 
-sub _get_genotype_alleles
+sub _get_genotype_loci
 {
   my $config = shift;
   my $schema = shift;
   my $genotype = shift;
 
-  my $rs = $genotype->alleles();
+  my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
+
+  my $rs = $schema->resultset('AlleleGenotype')
+    ->search({ genotype => $genotype->genotype_id() },
+             {
+               prefetch => [ { allele => 'gene' }, 'diploid' ],
+             });
 
   my @ret = ();
 
-  while (defined (my $allele = $rs->next())) {
+  my %non_haploids = ();
+
+  while (defined (my $allele_genotype = $rs->next())) {
+    my $allele = $allele_genotype->allele();
     my $gene = $allele->gene();
-    my $organism_full_name = $gene->organism()->full_name();
 
     if (!defined $allele->primary_identifier()) {
       warn "undefined primary_identifier: ", $allele->name(), "\n";
     }
 
     my %ret_hash = (
-      id => "$organism_full_name " . $allele->primary_identifier(),
+      id => $allele->primary_identifier(),
     );
 
     if ($allele->expression()) {
       $ret_hash{expression} = $allele->expression();
     }
 
-    push @ret, \%ret_hash;
+    my $locus = $allele_genotype->diploid();
+
+    if ($locus) {
+      push @{$non_haploids{$locus->diploid_id()}}, \%ret_hash;
+    } else {
+      push @ret, [\%ret_hash];
+    }
   }
+
+  push @ret, values %non_haploids;
 
   return @ret;
 }
@@ -296,43 +451,93 @@ sub _get_alleles
   my $config = shift;
   my $schema = shift;
 
+  my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
+
   my $rs = $schema->resultset('Allele');
 
   my %ret = ();
 
   while (defined (my $allele = $rs->next())) {
     my $gene = $allele->gene();
-    my $organism_full_name = $gene->organism()->full_name();
 
     if (!$allele->primary_identifier()) {
       die 'no primary_identifier for allele with ID: ', $allele->allele_id();
     }
 
-    my $key = "$organism_full_name " . $allele->primary_identifier();
-    my $gene_key = "$organism_full_name " . $gene->primary_identifier();
+    my $key = $allele->primary_identifier();
 
     my $export_type =
       $config->{allele_types}->{$allele->type()}->{export_type};
 
     if (!defined $export_type) {
-      croak "can't find the export/database type for allele: ",
-        ($allele->name() // 'noname'), "(", ($allele->description() // 'unknown'),
-        ") of gene: ", $gene->primary_identifier(), '  type: ', $allele->type();
+      $export_type = $allele->type();
     }
 
     my %allele_data = (
       allele_type => $export_type,
-      gene => $gene_key,
     );
+
+    if ($gene) {
+      my $taxonid = $gene->organism()->taxonid();
+
+      my $organism_details = $organism_lookup->lookup_by_taxonid($taxonid);
+      my $organism_full_name = $organism_details->{full_name};
+
+      my $gene_key;
+
+      if ($organism_full_name) {
+        $gene_key = "$organism_full_name " . $gene->primary_identifier();
+      } else {
+        $gene_key = $gene->primary_identifier();
+      }
+
+      $allele_data{gene} = $gene_key;
+    }
+
     if (defined $allele->primary_identifier()) {
       $allele_data{primary_identifier} = $allele->primary_identifier();
     }
     if (defined $allele->description()) {
       $allele_data{description} = $allele->description();
     }
-    if (defined $allele->name()) {
-      $allele_data{name} = $allele->name();
+    if ($allele->type() eq 'deletion') {
+      my $gene_proxy = Canto::Curs::GeneProxy->new(config => $config,
+                                                   cursdb_gene => $gene);
+
+      my $gene_name = $gene_proxy->primary_name();
+
+      $allele_data{name} =
+        ($gene_name // $gene->primary_identifier()) . 'delta';
+    } else {
+      if (defined $allele->name()) {
+        $allele_data{name} = $allele->name();
+      }
     }
+
+    my $note_types = $config->{allele_note_types};
+
+    if ($note_types && scalar(@{$note_types}) > 0) {
+      $allele_data{notes} = {};
+
+      my @notes = $allele->allele_notes()->all();
+
+      map {
+        my $note = $_;
+        $allele_data{notes}->{$_->key()} = $_->value();
+      } @notes;
+    }
+
+    my @allelesynonyms = $allele->allelesynonyms();
+
+    my @export_synonyms = ();
+
+    for my $synonym (@allelesynonyms) {
+      if ($synonym->edit_status() eq 'new') {
+        push @export_synonyms, $synonym->synonym();
+      }
+    }
+
+    $allele_data{synonyms} = \@export_synonyms;
 
     $ret{$key} = \%allele_data;
   }
@@ -358,6 +563,24 @@ sub _get_annotation_genotype
   }
 }
 
+sub _get_annotation_metagenotype
+{
+  my $schema = shift;
+  my $annotation = shift;
+
+  my @ret = map {
+    $_->identifier();
+  } $annotation->metagenotypes()->all();
+
+  if (@ret > 1) {
+    die "internal error during export: annotation ",
+      $annotation->annotation_id(),
+      " has more than one metagenotype";
+  } else {
+    return $ret[0];
+  }
+}
+
 sub _get_genotypes
 {
   my $config = shift;
@@ -367,16 +590,59 @@ sub _get_genotypes
   my %ret = ();
 
   while (defined (my $genotype = $rs->next())) {
-    $ret{$genotype->identifier()} = {
-      alleles => [_get_genotype_alleles($config, $schema, $genotype)]
+    my $genotype_identifier = $genotype->identifier();
+
+    $ret{$genotype_identifier} = {
+      loci => [_get_genotype_loci($config, $schema, $genotype)]
     };
 
+    if ($genotype->organism()) {
+      $ret{$genotype_identifier}->{organism_taxonid} = $genotype->organism()->taxonid();
+    }
+
+    my $strain = $genotype->strain();
+    if (defined $strain) {
+      my $strain_lookup = Canto::Track::StrainLookup->new(config => $config);
+      $ret{$genotype_identifier}->{organism_strain} =
+        $strain->lookup_strain_name($strain_lookup);
+    }
+
     if ($genotype->name()) {
-      $ret{$genotype->identifier()}->{name} = $genotype->name(),
+      $ret{$genotype_identifier}->{name} = $genotype->name(),
     }
     if ($genotype->background()) {
-      $ret{$genotype->identifier()}->{background} = $genotype->background(),
+      $ret{$genotype_identifier}->{background} = $genotype->background(),
     }
+    if ($genotype->comment()) {
+      $ret{$genotype_identifier}->{comment} = $genotype->comment(),
+    }
+  }
+
+  return %ret;
+}
+
+sub _get_metagenotypes
+{
+  my $config = shift;
+  my $schema = shift;
+
+  my $rs = $schema->resultset('Metagenotype',
+                              { prefetch => ['first_genotype', 'second_genotype'] });
+  my %ret = ();
+
+  while (defined (my $metagenotype = $rs->next())) {
+    if ($metagenotype->type() eq 'pathogen-host') {
+      $ret{$metagenotype->identifier()} = {
+        pathogen_genotype => $metagenotype->pathogen_genotype()->identifier(),
+        host_genotype => $metagenotype->host_genotype()->identifier(),
+      };
+    } else {
+      $ret{$metagenotype->identifier()} = {
+        genotype_a => $metagenotype->first_genotype()->identifier(),
+        genotype_b => $metagenotype->second_genotype()->identifier(),
+      };
+    }
+    $ret{$metagenotype->identifier()}->{type} = $metagenotype->type();
   }
 
   return %ret;
@@ -384,13 +650,18 @@ sub _get_genotypes
 
 sub _get_organisms
 {
+  my $config = shift;
   my $schema = shift;
+
+  my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
 
   my $rs = $schema->resultset('Organism');
   my %ret = ();
 
   while (defined (my $organism= $rs->next())) {
-    $ret{$organism->taxonid()} = { full_name => $organism->full_name() };
+    my $organism_details = $organism_lookup->lookup_by_taxonid($organism->taxonid());
+    my $full_name = $organism_details->{full_name};
+    $ret{$organism->taxonid()} = { full_name => $full_name };
   }
 
   return \%ret;
@@ -408,7 +679,6 @@ sub _get_pubs
     if ($options->{all_data}) {
       $ret{$pub->uniquename()} = {
         title => $pub->title(),
-        abstract => $pub->abstract(),
       };
     } else {
       $ret{$pub->uniquename()} = { };
@@ -417,6 +687,47 @@ sub _get_pubs
 
   return \%ret;
 }
+
+sub _get_curators_from_annotations
+{
+  my $annotations_ref = shift;
+  my @annotations = @$annotations_ref;
+
+  my $has_community_annotation = JSON::false;
+
+  my %annotation_curators = ();
+
+  map {
+    my $curator = $_->{curator};
+
+    if (defined $curator) {
+      if ($curator->{community_curated} == JSON::true) {
+        $has_community_annotation = JSON::true;
+      }
+      if (defined $curator->{name}) {
+        $annotation_curators{$curator->{name}}->{annotation_count}++;
+        $annotation_curators{$curator->{name}}->{community_curator} =
+          $curator->{community_curated};
+      }
+    }
+  } @annotations;
+
+  my @annotation_curators =
+    map {
+      my $name = $_;
+      my $count = $annotation_curators{$name}->{annotation_count};
+      my $community = $annotation_curators{$name}->{community_curator};
+
+      {
+        name => $name,
+        annotation_count => $count,
+        community_curator => $community,
+      };
+    } sort keys %annotation_curators;
+
+  return ($has_community_annotation, \@annotation_curators);
+}
+
 
 =head2 json
 
@@ -463,6 +774,7 @@ sub perl
   my $track_schema = shift;
   my $curs_key = shift;
   my $options = shift;
+  my $curs_status = shift;
 
   my $curs_schema =
     Canto::Curs::get_schema_for_key($config, $curs_key,
@@ -470,27 +782,57 @@ sub perl
                                       cache_connection => 0,
                                     });
 
+  # write the metadata for all sessions
   my %ret = (
-    metadata => _get_metadata($config, $track_schema, $curs_schema),
-    annotations => _get_annotations($config, $track_schema, $curs_schema),
-    organisms => _get_organisms($curs_schema, $options),
-    publications => _get_pubs($curs_schema, $options)
+    metadata => _get_metadata($config, $track_schema, $curs_schema, $options),
+    publications => _get_pubs($curs_schema, $options),
   );
 
-  my %genes = _get_genes($curs_schema);
-  if (keys %genes) {
-    $ret{genes} = \%genes;
-  }
+  if (($curs_status &&
+         ($curs_status eq 'APPROVED' &&
+          ($options->{dump_approved} || $options->{export_approved})))
+        ||
+      (!$options->{dump_approved} && !$options->{export_approved})) {
+    # only write the annotations if the session is approved or we're writing
+    # everything
 
-  my %alleles = _get_alleles($config, $curs_schema);
-  if (keys %alleles) {
-    $ret{alleles} = \%alleles;
-  }
+    $ret{annotations} = _get_annotations($config, $track_schema, $curs_schema, $options);
 
-  my %genotypes = _get_genotypes($config, $curs_schema);
+    my ($has_community_annotation, $annotation_curators) =
+      _get_curators_from_annotations($ret{annotations});
 
-  if (%genotypes) {
-    $ret{genotypes} = \%genotypes;
+    $ret{metadata}{has_community_curation} = $has_community_annotation;
+
+    if ($options->{export_curator_names}) {
+      $ret{metadata}{annotation_curators} = $annotation_curators;
+    }
+
+    $ret{organisms} = _get_organisms($config, $curs_schema, $options);
+
+    my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
+
+    my %genes = _get_genes($organism_lookup, $curs_schema);
+    if (keys %genes) {
+      $ret{genes} = \%genes;
+    }
+
+    my %alleles = _get_alleles($config, $curs_schema);
+    if (keys %alleles) {
+      $ret{alleles} = \%alleles;
+    }
+
+    my %genotypes = _get_genotypes($config, $curs_schema);
+
+    if (keys %genotypes) {
+      $ret{genotypes} = \%genotypes;
+    }
+
+    my %metagenotypes = _get_metagenotypes($config, $curs_schema);
+
+    if (keys %metagenotypes) {
+      $ret{metagenotypes} = \%metagenotypes;
+    }
+
   }
 
   $curs_schema->disconnect();

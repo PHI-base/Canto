@@ -42,6 +42,8 @@ use warnings;
 use Carp;
 use Moose;
 
+use List::MoreUtils qw(natatime);
+
 with 'Canto::Role::MetadataAccess';
 
 use File::Copy qw(copy);
@@ -51,6 +53,8 @@ use Canto::Curs;
 use Canto::CursDB;
 use Canto::Util;
 use Canto::Curs::State qw/:all/;
+use Canto::Track::GeneLoad;
+use Canto::Track::AdaptorUtil;
 
 =head2 create_curs
 
@@ -60,8 +64,10 @@ use Canto::Curs::State qw/:all/;
            object.
  Args    : $config - the Config object
            $track_schema - the TrackDB schema object
-           $pub_uniquename - the uniquename (PMID) of a publication; the Pub
-                             object will be created if it doesn't exist
+           $pub - the uniquename (PMID) of a publication; the Pub object will be
+                  created if it doesn't exist
+                 OR: a Pub object to use
+           $connect_options - options passed to cached_connect()
  Return  :
 
 =cut
@@ -70,9 +76,13 @@ sub create_curs
 {
   my $config = shift;
   my $track_schema = shift;
-  my $pub_uniquename = shift;
+  my $pub = shift;
+  my $connect_options = shift;
 
-  my $pub = $track_schema->resultset('Pub')->find_or_create({ uniquename => $pub_uniquename });
+  if (!ref $pub) {
+    $pub = $track_schema->resultset('Pub')->find_or_create({ uniquename => $pub });
+  }
+
   my $curs_key = Canto::Curs::make_curs_key();
 
   my $curs = $track_schema->create_with_type('Curs',
@@ -81,20 +91,21 @@ sub create_curs
                                                curs_key => $curs_key,
                                              });
 
-  my $curs_db = Canto::Track::create_curs_db($config, $curs);
+  my $curs_db = Canto::Track::create_curs_db($config, $curs, undef, $connect_options);
 
   return ($curs, $curs_db);
 }
 
 =head2 create_curs_db
 
- Usage   : Canto::Track::create_curs_db($config, $curs_object);
+ Usage   : Canto::Track::create_curs_db($config, $curs_object, );
  Function: Create a database for a curs, using the curs_key field of the object
            to create the database (file)name.
  Args    : $config - the Config object
            $curs - the Curs object
            $current_user - the current logged in user (or undef if no one is
                            logged in)
+           $connect_options - options passed to cached_connect()
  Returns : ($curs_schema, $cursdb_file_name) - A CursDB object for the new db,
            and its file name - die()s on failure
 
@@ -104,6 +115,7 @@ sub create_curs_db
   my $config = shift;
   my $curs = shift;
   my $current_user = shift;
+  my $connect_options = shift;
 
   if (!defined $curs) {
     croak "No Curs object passed";
@@ -123,7 +135,8 @@ sub create_curs_db
   copy($curs_db_template_file, $db_file_name) or die "$!\n";
 
   my $connect_string = Canto::Curs::make_connect_string($config, $curs_key);
-  my $curs_schema = Canto::CursDB->cached_connect($connect_string);
+  my $curs_schema = Canto::CursDB->cached_connect($connect_string, undef, undef,
+                                                  $connect_options);
 
   my $track_db_pub = $curs->pub();
   my $curs_db_pub =
@@ -154,12 +167,13 @@ sub create_curs_db
   my $curatable_cvterm =
     $track_schema->resultset('Cvterm')->find({ name => $curatable_name });
 
-  if (!defined $curatable_cvterm) {
-    croak "Can't find Cvterm with name '$curatable_name'";
+  if (defined $curatable_cvterm) {
+    $pub->triage_status($curatable_cvterm);
+    $pub->update();
+  } else {
+    warn "Can't find Cvterm with name '$curatable_name' - not setting curation " .
+      "status for ", $curs->curs_key(), "\n";
   }
-
-  $pub->triage_status($curatable_cvterm);
-  $pub->update();
 
   my $state = Canto::Curs::State->new(config => $config);
   $state->store_statuses($curs_schema);
@@ -199,29 +213,9 @@ sub create_curs_db_hook
 =cut
 sub get_adaptor
 {
-  my ($config, $adaptor_name, $args) = @_;
-
-  if (!defined $adaptor_name) {
-    croak "no adaptor_name passed to get_adaptor()\n";
-  }
-
-  my $conf_name = "${adaptor_name}_adaptor";
-
-  my $impl_class = $config->{implementation_classes}->{$conf_name};
-
-  if (!defined $impl_class) {
-    return undef;
-  }
-
-  my %args = ();
-
-  if (defined $args) {
-    %args = %$args;
-  }
-
-  eval "use $impl_class";
-  die "failed to import $impl_class: $@" if $@;
-  return $impl_class->new(config => $config, %args);
+  # Moved get_adaptor() to a separate class so that it can be used without
+  # use-ing the whole Track class.
+  return Canto::Track::AdaptorUtil::get_adaptor(@_);
 }
 
 =head2 curs_iterator
@@ -261,6 +255,29 @@ sub curs_iterator
   };
 }
 
+=head2 all_curs_keys
+
+ Usage   : @keys = Canto::Track::all_curs_keys($track_schema);
+ Function: Return a list of the curs keys
+ Args    : $track_schema - the TrackDB schema
+
+=cut
+
+sub all_curs_keys
+{
+  my $track_schema = shift;
+
+  my @curs_keys = ();
+
+  my $rs = $track_schema->resultset('Curs');
+
+  while (defined (my $curs = $rs->next())) {
+    push @curs_keys, $curs->curs_key();
+  }
+
+  return @curs_keys;
+}
+
 =head2 curs_map
 
  Usage   : my $proc = sub { ... };
@@ -289,6 +306,8 @@ sub curs_map
       Canto::Curs::get_schema_for_key($config, $curs_key,
                                       { cache_connection => 0 });
     push @ret, $func->($curs, $curs_schema, $track_schema);
+
+    $curs_schema->storage()->disconnect();
   }
 
   return @ret;
@@ -330,7 +349,7 @@ sub delete_curs
   $curs->delete();
 
   my $db_file_name = Canto::Curs::make_long_db_file_name($config, $curs_key);
-  unlink $db_file_name or die "couldn't delete session $curs_key: $!";
+  unlink $db_file_name or warn "couldn't delete session $curs_key: $!";
 
   my @suffices = qw(journal wal shm);
   for my $suffix (@suffices) {
@@ -487,7 +506,6 @@ sub validate_curs
   while (defined (my $allele = $allele_rs->next())) {
     if (!$allele->primary_identifier()) {
       my $new_primary_identifier = $allele->gene()->primary_identifier() . ":$curs_key-" . $allele->allele_id();
-      warn $curs_key, " ", $allele->allele_id(), " $new_primary_identifier\n";
       $allele->primary_identifier($new_primary_identifier);
       $allele->update();
     }
@@ -498,6 +516,9 @@ sub validate_curs
                        {
                          where => \"allele_id NOT IN (SELECT allele FROM allele_genotype)",
                        });
+
+  $alleles_with_no_genotype_rs->search_related('allelesynonyms')->delete();
+  $alleles_with_no_genotype_rs->search_related('allele_notes')->delete();
 
   $alleles_with_no_genotype_rs->delete();
 
@@ -527,6 +548,93 @@ sub update_all_statuses
   while (my ($curs, $cursdb) = $iter->()) {
     $state->store_statuses($cursdb);
   }
+}
+
+=head2 refresh_gene_cache
+
+ Usage   : Canto::Track::refresh_gene_cache($config, $track_schema);
+ Function: Clear cached genes, then re-fetch them
+
+=cut
+
+sub refresh_gene_cache
+{
+
+  my $config = shift;
+  my $track_schema = shift;
+
+  my $adaptor = Canto::Track::get_adaptor($config, 'gene');
+
+  if (!$adaptor->isa('Canto::UniProt::GeneLookup')) {
+    die "failed to refresh gene cache - refreshing only works for the UniProt GeneLookup\n" .
+      "adaptor\n";
+  }
+
+  my %current_genes = ();
+  my @current_gene_primary_identifiers = ();
+
+  my $delete_genes = sub {
+    map {
+      my $gene = $_;
+      $current_genes{$_->primary_identifier()} =
+        {
+          primary_identifier => $_->primary_identifier(),
+          primary_name => $_->primary_name(),
+          synonyms => [map {
+            my $synonym = $_;
+            $synonym->identifier();
+          } $_->genesynonyms()->all()],
+          product => $gene->product(),
+          organism_id => $gene->organism()->organism_id(),
+        };
+
+      push @current_gene_primary_identifiers, $_->primary_identifier();
+
+    } $track_schema->resultset('Gene', {}, { prefetch => 'organism' })->all();
+
+    $track_schema->resultset('Genesynonym')->delete();
+    $track_schema->resultset('Gene')->delete();
+  };
+
+  $track_schema->txn_do($delete_genes);
+
+
+  my @missing_ids = ();
+
+  # lookup 50 genes at a time so we don't send a huge query
+  my $iter = natatime 50, @current_gene_primary_identifiers;
+
+  while (my @ids = $iter->()) {
+    my $lookup_proc = sub {
+      my $lookup_results = $adaptor->lookup(\@ids);
+
+      if (@{$lookup_results->{missing}}) {
+        push @missing_ids, @{$lookup_results->{missing}};
+      }
+    };
+
+    $track_schema->txn_do($lookup_proc);
+  }
+
+  my $restore_missing_proc = sub {
+    for my $missing_id (@missing_ids) {
+      my $saved_gene = $current_genes{$missing_id};
+      if ($saved_gene) {
+        my $organism_id = $saved_gene->{organism_id};
+
+        my $organism = $track_schema->resultset('Organism')->find($organism_id);
+
+        my $gene_load = Canto::Track::GeneLoad->new(schema => $track_schema,
+                                                    organism => $organism);
+
+        $gene_load->create_gene($saved_gene->{primary_identifier},
+                                $saved_gene->{primary_name},
+                                $saved_gene->{synonyms}, $saved_gene->{product});
+      }
+    }
+  };
+
+  $track_schema->txn_do($restore_missing_proc);
 }
 
 1;

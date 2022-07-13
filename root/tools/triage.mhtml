@@ -68,7 +68,7 @@ $return_pub_id
         <div class="sect-content">
           <& /person_picker.mhtml, id_prefix => 'triage-corresponding-author',
              default_person => $pub->corresponding_author() &>
-          <button class="curs-person-picker-add" type="button">New ...</button>
+          <button class="curs-person-picker-add" type="button">Add author</button>
         </div>
       </div>
       <div class="sect triage-curation-priorities">
@@ -207,11 +207,28 @@ my @curation_priorities =
       cvterm_id => $_->[2],
     }
   } sort {
-    $b->[1] <=> $a->[1];
+    if (defined $b->[1] && defined $a->[1]) {
+      $b->[1] <=> $a->[1];
+    } else {
+      if (defined $b->[1]) {
+        1;
+      } else {
+        if (defined $b->[0]) {
+          0;
+        } else {
+          $b->[0] <=> $a->[0];
+        }
+      }
+    }
   } map {
-    my $numeric_priority = $_->cvtermprop_cvterms()->
+    my $numeric_priority_prop = $_->cvtermprop_cvterms()->
       search({ 'type.name' => 'Canto numeric priority' },
-             { join => 'type' })->first()->value();
+             { join => 'type' })->first();
+    my $numeric_priority = undef;
+    if (defined $numeric_priority_prop) {
+      $numeric_priority = $numeric_priority_prop->value();
+    }
+
     [ $_->name(), $numeric_priority, $_->cvterm_id() ];
   } @curation_priority_cvterms;
 

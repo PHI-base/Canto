@@ -52,6 +52,7 @@ use warnings;
              "FeatureID" - the ID of any annotatable feature is allowed
              "TranscriptID" - only transcript IDs are allowed in the range
              "ProteinID" - only protein IDs are allowed
+             "MetagenotypeID" - only metagenotypes are allowed
 =cut
 
 sub parse {
@@ -69,7 +70,7 @@ sub parse {
       next if $line =~ /^#/;
 
       my ($domain, $subset_rel, $allowed_relation, $range, $display_text, $help_text,
-          $cardinality, $role) =
+          $cardinality, $role, $annotation_type_name, $feature_type) =
             split (/\t/, $line);
 
       if ($domain =~ /^\s*domain/i) {
@@ -111,47 +112,56 @@ sub parse {
       map {
         if (/:/) {
           push @new_ontology_range_scope, $_;
-        } else {
-          if (lc $_ eq 'number') {
-            if (!grep { $_->{type} eq 'Number'} @new_range_bits) {
-              push @new_range_bits, {
-                type => 'Number',
-              };
-            }
-          } else {
-            if (/^text$/i) {
-              if (!grep { $_->{type} eq 'Text'} @new_range_bits) {
-                push @new_range_bits, {
-                  type => 'Text',
-                  input_type => lc $_,
-                };
-              }
-            } else {
-              if (/^(Gene|FeatureID|GeneID|ProteinID|TranscriptID|tRNAID|SP.*)$/i) {
-                # hack: treat everything else as a gene (and normalise the case)
-                if (!grep { $_->{type} eq 'Gene'} @new_range_bits) {
-                  push @new_range_bits, {
-                    type => 'Gene',
-                  }
-                }
-              } else {
-                if ($_ eq '%') {
-                  if (!grep { $_->{type} eq '%'} @new_range_bits) {
-                    push @new_range_bits, {
-                      type => '%',
-                    };
-                  }
-                } else {
-                  die "unsupported range part: $_\n";
-                }
-              }
+        } elsif (/^Number$/i) {
+          if (!grep { $_->{type} eq 'Number'} @new_range_bits) {
+            push @new_range_bits, {
+              type => 'Number',
+            };
+          }
+        } elsif (/^text$/i) {
+          if (!grep { $_->{type} eq 'Text'} @new_range_bits) {
+            push @new_range_bits, {
+              type => 'Text',
+              input_type => lc $_,
+            };
+          }
+        } elsif (/^(Gene|FeatureID|GeneID|ProteinID|TranscriptID|tRNAID|SP.*)$/i) {
+          # hack: treat everything else as a gene (and normalise the case)
+          if (!grep { $_->{type} eq 'Gene'} @new_range_bits) {
+            push @new_range_bits, {
+              type => 'Gene',
             }
           }
+        } elsif ($_ eq '%') {
+          if (!grep { $_->{type} eq '%'} @new_range_bits) {
+            push @new_range_bits, {
+              type => '%',
+            };
+          }
+        } elsif (/^metagenotype/i) {
+          push @new_range_bits, {
+            type => 'Metagenotype',
+          }
+        } elsif (/^TaxonID$/i) {
+          push @new_range_bits, {
+            type => 'TaxonID',
+          }
+        } elsif (/^PathogenTaxonID$/i) {
+          push @new_range_bits, {
+            type => 'PathogenTaxonID',
+          }
+        } elsif (/^HostTaxonID$/i) {
+          push @new_range_bits, {
+            type => 'HostTaxonID',
+          }
+        } else {
+          die "unsupported range part: $_\n";
         }
       } @range_bits;
 
       if (@new_ontology_range_scope) {
-        unshift @new_range_bits,
+        # put term completion last, see: https://github.com/pombase/canto/issues/2569
+        push @new_range_bits,
           {
             type => 'Ontology',
             scope => \@new_ontology_range_scope,
@@ -166,6 +176,8 @@ sub parse {
         help_text => $help_text,
         cardinality => \@cardinality,
         role => $role,
+        annotation_type_name => $annotation_type_name,
+        feature_type => $feature_type,
       );
 
       if ($domain =~ /(\S+)-(\S+)/) {

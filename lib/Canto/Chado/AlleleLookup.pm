@@ -105,7 +105,7 @@ sub lookup
     die "no search_string parameter passed to lookup()";
   }
 
-  my $max_results = $args{max_results} || 10;
+  my $max_results = $args{max_results} || 20;
 
   my $schema = $self->schema();
 
@@ -113,6 +113,9 @@ sub lookup
     $schema->resultset('FeatureRelationship')
            ->search({ 'object.uniquename' => $gene_primary_identifier },
                     { join => 'object' });
+
+  $search_string =~ s/^\s+//;
+  $search_string =~ s/\s+$//;
 
   my @search_args = ('lower(features.name)', { -like => '%' . lc $search_string . '%' });
 
@@ -136,6 +139,38 @@ sub lookup
    )
   } $rs->all();
 
+  if (scalar(keys %res) < $max_results) {
+    my $synonym_rs = $schema->resultset('Cv')
+      ->search({ 'me.name' => 'sequence' })
+      ->search_related('cvterms', { 'cvterms.name' => 'allele' })
+      ->search_related('features')
+      ->search({ 'features.feature_id' => {
+                   -in => $gene_constraint_rs->get_column('subject_id')->as_query(),
+                 },
+                 'lower(synonym.name)' => { -like => '%' . lc $search_string . '%' }
+               },
+               { join => { feature_synonyms => 'synonym' } });
+
+    map {
+      $res{$_->feature_id()} = {
+        name => $_->name(),
+        uniquename => $_->uniquename(),
+      };
+    } $synonym_rs->all();
+  }
+
+  my $syn_rs = $schema->resultset('FeatureSynonym')
+    ->search({ feature_id => { -in => [ keys %res ] } },
+             { prefetch => { synonym => 'type' }});
+
+  while (defined (my $row = $syn_rs->next())) {
+    my $synonym = $row->synonym();
+    push @{$res{$row->feature_id()}->{synonyms}}, {
+      synonym => $synonym->name(),
+      edit_status => 'existing',
+    };
+  }
+
   my $desc_rs = $schema->resultset('Cv')
     ->search({ 'me.name' => 'PomBase feature property types' })
     ->search_related('cvterms',
@@ -157,7 +192,8 @@ sub lookup
 
   return [ map {
     my $display_name =
-      Canto::Curs::Utils::make_allele_display_name($_->{name},
+      Canto::Curs::Utils::make_allele_display_name($self->config(),
+                                                   $_->{name},
                                                    $_->{description},
                                                    $_->{allele_type});
 
@@ -166,6 +202,8 @@ sub lookup
       Canto::Curs::Utils::canto_allele_type($self->config(),
                                             $_->{allele_type},
                                             $_->{description});
+    $_->{synonyms} //= [];
+
     delete $_->{allele_type};
     $_;
   } @res ];
@@ -224,7 +262,8 @@ sub lookup_by_uniquename
     } $allele->featureprops()->all();
 
     my $display_name =
-      Canto::Curs::Utils::make_allele_display_name($allele->name(),
+      Canto::Curs::Utils::make_allele_display_name($self->config(),
+                                                   $allele->name(),
                                                    $props{description},
                                                    $props{allele_type});
 
@@ -240,6 +279,7 @@ sub lookup_by_uniquename
       description => $props{description},
       type => $allele_type,
       gene_uniquename => $gene_uniquename,
+      synonyms => [],
     }
   }
 

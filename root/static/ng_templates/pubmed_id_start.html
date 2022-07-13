@@ -5,7 +5,7 @@
     </div>
     <div>
       <input type="text" ng-model="data.searchId"/>
-      <button class="btn btn-primary" ng-click="search()">Find ...</button>
+      <button class="btn btn-primary" ng-click="search()">Find</button>
     </div>
   </div>
   <div ng-if="data.results">
@@ -16,8 +16,8 @@
         Please contact the curation team to suggest changes to the
         annotation.</span>
       </div>
-      <span ng-if="userIsAdmin">
-        Admin only: <a href="......">publication page</a>.
+      <span ng-if="userIsAdmin && publicationPageUrl">
+        Admin only: <a href="{{publicationPageUrl}}">publication page</a>.
       </span>
       <div ng-if="publicMode">
         In this demo version, you can visit the existing curation session
@@ -59,6 +59,11 @@
         <span ng-if="data.results.sessions.length > 0">View session</span>
         <span ng-if="data.results.sessions.length == 0">Continue</span>
       </button>
+      <button
+        ng-if="allowRestartApproval"
+        type="button"
+        class="btn btn-primary"
+        ng-click="restartApproval()">Restart approval</button>
     </div>
   </div>
 </div>

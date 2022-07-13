@@ -1,0 +1,80 @@
+<div class="curs-annotation-transfer">
+  <div class="modal-header">
+    <h4 ng-if="!features" class="modal-title">
+      Transfer annotation
+    </h4>
+    <h4 ng-if="features" class="modal-title">
+      <span ng-if="annotationType.category == 'interaction'">
+        Transfer <span class="curs-annotation-transfer-interactor-label" ng-if="interactorAorB">Interactor {{interactorAorB}}</span> {{annotationType.display_name}} annotation
+      </span>
+      <span ng-if="annotationType.category != 'interaction'">
+      Transfer <span ng-if="annotation.term_name">"{{termAndExtension()}}"</span>
+      <span ng-show="featureDisplayName">from
+        <span ng-bind-html="featureDisplayName | encodeAlleleSymbols | toTrusted"></span>
+      </span>
+      to:
+      </span>
+    </h4>
+  </div>
+
+  <div ng-if="!features" class="modal-body">
+    (Loading ...)
+  </div>
+
+  <div ng-if="features" class="modal-body">
+
+    <div class="curs-annotation-transfer-choose-interactor" ng-if="annotationType.category == 'interaction' && !interactorAorB">
+      <div>
+      Choose interactor:
+      </div>
+      <div>
+      <div>
+        <a href="#" ng-click="chooseInteractor('A')">Interactor A</a>
+      </div>
+      <div>
+        <a href="#" ng-click="chooseInteractor('B')">Interactor B</a>
+      </div>
+      </div>
+    </div>
+
+    <div ng-if="annotationType.category == 'interaction'">
+      <interaction-annotation-single-row annotation="annotation"
+                                         annotation-type-name="{{annotationType.name}}">
+      </interaction-annotation-single-row>
+    </div>
+
+    <div ng-if="annotationType.category != 'interaction' || interactorAorB">
+
+    <div class="curs-annotation-transfer-features">
+      <multi-feature-chooser ng-if="!!otherFeatures" 
+                             features="otherFeatures" feature-type="{{featureType}}"
+                             selected-feature-ids="selectedFeatureIds">
+      </multi-feature-chooser>
+
+      <div ng-if="featureType == 'gene'" class="clearall">
+        <a ng-click="openSingleGeneAddDialog()">Add another gene</a>
+      </div>
+    </div>
+
+    <div class="curs-annotation-transfer-extension"
+         ng-if="!!otherFeatures && hasExtension()">
+      <label>
+        <input type="checkbox" name="transferExtension"
+               ng-checked="transferExtension"
+               ng-click="toggleExtensionTransfer()" />
+        Transfer extension
+      </label>
+    </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-warning" ng-click="cancel()">Cancel</button>
+      <button ng-if="annotationType.category != 'interaction' || interactorAorB"
+              class="btn btn-primary" ng-click="ok()" ng-alt-enter="ok()"
+              title="{{ okButtonTitleMessage() }}"
+              ng-disabled="!canTransfer()">OK</button>
+    </div>
+
+  </div>
+
+</div>

@@ -32,11 +32,6 @@ __PACKAGE__->table("organism");
   is_auto_increment: 1
   is_nullable: 0
 
-=head2 full_name
-
-  data_type: 'text'
-  is_nullable: 0
-
 =head2 taxonid
 
   data_type: 'integer'
@@ -47,8 +42,6 @@ __PACKAGE__->table("organism");
 __PACKAGE__->add_columns(
   "organism_id",
   { data_type => "integer", is_auto_increment => 1, is_nullable => 0 },
-  "full_name",
-  { data_type => "text", is_nullable => 0 },
   "taxonid",
   { data_type => "integer", is_nullable => 0 },
 );
@@ -64,20 +57,6 @@ __PACKAGE__->add_columns(
 =cut
 
 __PACKAGE__->set_primary_key("organism_id");
-
-=head1 UNIQUE CONSTRAINTS
-
-=head2 C<full_name_unique>
-
-=over 4
-
-=item * L</full_name>
-
-=back
-
-=cut
-
-__PACKAGE__->add_unique_constraint("full_name_unique", ["full_name"]);
 
 =head1 RELATIONS
 
@@ -96,9 +75,39 @@ __PACKAGE__->has_many(
   { cascade_copy => 0, cascade_delete => 0 },
 );
 
+=head2 genotypes
 
-# Created by DBIx::Class::Schema::Loader v0.07033 @ 2013-10-13 23:27:25
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:Db8WF7vVIEMMwsYfBTXb1A
+Type: has_many
+
+Related object: L<Canto::CursDB::Genotype>
+
+=cut
+
+__PACKAGE__->has_many(
+  "genotypes",
+  "Canto::CursDB::Genotype",
+  { "foreign.organism_id" => "self.organism_id" },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
+
+=head2 strains
+
+Type: has_many
+
+Related object: L<Canto::CursDB::Strain>
+
+=cut
+
+__PACKAGE__->has_many(
+  "strains",
+  "Canto::CursDB::Strain",
+  { "foreign.organism_id" => "self.organism_id" },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
+
+
+# Created by DBIx::Class::Schema::Loader v0.07048 @ 2018-09-24 17:18:40
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:YOCVhtuE3pzijQMAW+7ExQ
 
 
 use Carp;
@@ -106,14 +115,16 @@ use Carp;
 sub get_organism
 {
   my $schema = shift;
-  my $name = shift;
   my $taxonid = shift;
+  my $pathogen_or_host = shift;
 
   croak "taxonid argument undefined" unless defined $taxonid;
 
+  croak "taxonid not a number: $taxonid" unless $taxonid =~ /^\d+$/;
+
   return $schema->find_or_create_with_type('Organism',
-                                           { full_name => $name,
-                                             taxonid => $taxonid });
+                                           { taxonid => $taxonid,
+                                           });
 }
 
 

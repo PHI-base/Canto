@@ -20,7 +20,7 @@ section:
     ./canto/script/canto_docker ./script/canto_load.pl --genes \
         /import_export/genes_file.tsv --for-taxon 4896
 
-Only three host directories (`canto`, `data` and `import_export`) are
+Only four host directories (`canto`, `data`, `logs` and `import_export`) are
 visible inside the container so reading and writing of files should be
 via those directories.  In particular, as in the example above,
 datasets for loading should be added to your `import_export` directory
@@ -69,7 +69,7 @@ or more ontologies before using Canto.
 
 Add an organism using this command in the `canto` directory:
 
-    ./script/canto_add.pl --organism <genus> <species> <taxon_id>
+    ./script/canto_add.pl --organism "<genus> <species>" <taxon_id>
 
 At least one organism is needed in the Canto database before genes can be
 loaded.
@@ -94,9 +94,7 @@ The columns are:
 - synonyms (comma separated)
 - gene product or description
 
-There is a small example file in the test directory:
-
-    ./script/canto_load.pl --genes t/data/pombe_genes.txt --for-taxon 4896
+There is a small example file in the [test directory](https://raw.githubusercontent.com/pombase/canto/master/t/data/pombe_genes.txt).
 
 ### Ontology terms
 

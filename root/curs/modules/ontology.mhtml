@@ -6,6 +6,10 @@ $feature
 $pub
 </%args>
 
+<div class="curs-annotate-feature-title">
+    Annotating <% $feature_type %> &ndash; <% $feature_display_name %>
+</div>
+
 <div ng-controller="OntologyWorkflowCtrl"
      annotation-type-name="<% $annotation_type_name %>"
      feature-id="<% $feature->feature_id %>">
@@ -18,17 +22,18 @@ $pub
                            annotation-type="annotationType"
                            term-id="{{currentTerm()}}"
                            matching-synonym="{{matchingSynonym()}}"
+                           do-not-annotate-current-Term="doNotAnnotateCurrentTerm"
                            goto-child-callback="gotoChild(childId)"
                            unset-term-callback="unsetTerm()"
                            suggest-term-callback="suggestTerm(termSuggestion)"
                            confirm-term-callback="confirmTerm()"
-                           feature-display-name="<% $feature->display_name() %>"></ontology-term-confirm>
+                           feature-display-name="<% $feature_display_name %>"></ontology-term-confirm>
   </div>
 
   <div ng-show="getState() == 'selectingEvidence'" class="ng-cloak curs-box">
     <div class="curs-box-title">
 Choose evidence <span ng-show="annotationType.can_have_conditions">and conditions</span>
-for annotating <% $feature->display_name() %> with {{termDetails.id}}
+for annotating <% $feature_display_name %> with {{termDetails.id}}
     </div>
     <div class="curs-box-body">
       <annotation-evidence evidence-code="data.evidence_code"
@@ -37,10 +42,8 @@ for annotating <% $feature->display_name() %> with {{termDetails.id}}
                            valid-evidence="data.validEvidence"
                            annotation-type-name="<% $annotation_type_name %>"></annotation-evidence>
 
-      <div ng-if="showConditions" class="curs-evidence-conditions">
-        Please add experimental conditions.  Conditions are the aspects of the
-        experimental setup that are independent of what cells (strain, genotype,
-        constructs, etc.) are used.
+      <div ng-if="showConditions()" class="curs-evidence-conditions">
+        <% $conditions_help_text %>
         <condition-picker conditions="data.conditions"></condition-picker>
       </div>
     </div>
@@ -52,31 +55,51 @@ Annotation extensions
     </div>
     <div class="curs-box-body">
       <extension-builder extension="data.extension"
-                         feature-display-name='<% $feature->display_name() %>'
+                         feature-display-name='<% $feature_display_name %>'
                          term-id="{{currentTerm()}}"
-                         is-valid="extensionBuilderIsValid"></extension-builder>
+                         is-valid="extensionBuilderIsValid"
+                         annotation-type-name="<% $annotation_type_name %>"
+                         feature-type="finalFeatureType"></extension-builder>
     </div>
   </div>
 
-  <div class="ng-cloak">
+  <div ng-if="annotationType" class="ng-cloak">
   <ontology-term-comment-transfer ng-show="getState() == 'commenting'"
                                   feature-type="<% $feature_type %>"
-                                  feature-display-name="<% $feature->display_name() %>"
+                                  feature-display-name="<% $feature_display_name %>"
                                   annotation-details="annotationForServer"
                                   comment="data.comment"
+                                  fig-or-table="data.figure"
                                   annotation-type="annotationType"></ontology-term-comment-transfer>
   </div>
 
-  <div ng-show="currentTerm()" class="ng-cloak">
+  <div ng-show="currentTerm()" class="ng-cloak curs-ontology-workflow-buttons">
     <button type="submit" class="btn btn-primary curs-back-button"
-            title="&lt;- Back"
-            ng-click="back()">&lt;- Back</button>
-    <button type="submit" class="btn btn-primary curs-finish-button"
-            ng-disabled="!isValid() || postInProgress"
-            ng-click="proceed()" >Proceed -&gt;</button>
+            title="&larr; Back"
+            ng-click="back()">&larr; Back</button>
+    <div ng-if="getState() == 'searching' && doNotAnnotateCurrentTerm" class="curs-do-not-annotate">
+      This term should not be used for direct annotations. Please
+      select a more specific term, or suggest a new descendant term.
+    </div>
+    <button ng-if="getState() != 'searching' || !doNotAnnotateCurrentTerm"
+            type="submit" class="btn btn-primary curs-finish-button"
+            title="Proceed &rarr;"
+            ng-disabled="!isValid() || storeInProgress"
+            ng-click="proceed()" >Proceed &rarr;</button>
   </div>
 
   <a ng-show="!prevState() && !currentTerm() && backToFeatureUrl"
      href="{{backToFeatureUrl}}"
-     class="btn btn-primary curs-back-button">&lt;- Back</a>
+     class="btn btn-primary curs-back-button">&larr; Back</a>
 </div>
+
+<%init>
+my $feature_display_name;
+if ($feature_type eq 'gene') {
+  $feature_display_name = $feature->display_name();
+} else {
+  $feature_display_name = $feature->display_name($c->config());
+}
+my $conditions_help_text =
+  $c->config()->{curs_config}->{experimental_conditions_help_text} // 'Please add experimental conditions:';
+</%init>

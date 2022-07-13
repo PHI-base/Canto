@@ -73,8 +73,14 @@ test_psgi $app, sub {
 
   cmp_deeply($perl_res,
              {
-               'allele_string' => 'ssm4delta SPCC63.05delta',
+               'allele_string' => 'SPCC63.05delta ssm4delta',
                'genotype_id' => 1,
+               'locus_count' => 2,
+               'diploid_locus_count' => 0,
+               'metagenotype_count_by_type' => {
+                 interaction => 1,
+               },
+               strain_name => undef,
                'alleles' => [
                  {
                    'type' => 'deletion',
@@ -83,12 +89,18 @@ test_psgi $app, sub {
                    'description' => 'deletion',
                    'gene_id' => 2,
                    'display_name' => 'ssm4delta',
+                   'long_display_name' => 'ssm4delta',
                    'expression' => undef,
                    'uniquename' => 'SPAC27D7.13c:aaaa0007-1',
                    'gene_display_name' => 'ssm4',
+                   'gene_systematic_id' => 'SPAC27D7.13c',
+                   'comment' => undef,
+                   'synonyms' => [],
+                   'notes' => {},
                  },
                  {
                    'display_name' => 'SPCC63.05delta',
+                   'long_display_name' => 'SPCC63.05delta',
                    'expression' => undef,
                    'uniquename' => 'SPCC63.05:aaaa0007-1',
                    'gene_id' => 4,
@@ -97,6 +109,10 @@ test_psgi $app, sub {
                    'allele_id' => 5,
                    'type' => 'deletion',
                    'gene_display_name' => 'SPCC63.05',
+                   'gene_systematic_id' => 'SPCC63.05',
+                   'comment' => undef,
+                   'synonyms' => [],
+                   'notes' => {},
                  }
                ],
                'display_name' => 'SPCC63.05delta ssm4KE',
@@ -104,6 +120,14 @@ test_psgi $app, sub {
                'name' => 'SPCC63.05delta ssm4KE',
                annotation_count => 1,
                background => 'h+',
+               comment => undef,
+               organism => {
+                 scientific_name => 'Schizosaccharomyces pombe',
+                 taxonid => '4896',
+                 pathogen_or_host => 'unknown',
+                 full_name => 'Schizosaccharomyces pombe',
+                 common_name => 'fission yeast'
+               },
              });
 };
 
@@ -120,9 +144,11 @@ test_psgi $app, sub {
     is($perl_res->{annotation_mode}, undef);
   }
 
+  my $post_header = ['Content-Type' => 'application/json; charset=UTF-8'];
+
   {
-    my $uri = new URI("$root_url/ws/settings/set/annotation_mode/advanced");
-    my $req = HTTP::Request->new(GET => $uri);
+    my $uri = new URI("$root_url/ws/settings/set/annotation_mode");
+    my $req = HTTP::Request->new(POST => $uri, $post_header, '{"value": "advanced"}');
     my $res = $cb->($req);
 
     my $perl_res = decode_json $res->content();
@@ -141,8 +167,8 @@ test_psgi $app, sub {
   }
 
   {
-    my $uri = new URI("$root_url/ws/settings/set/dummy/dummy");
-    my $req = HTTP::Request->new(GET => $uri);
+    my $uri = new URI("$root_url/ws/settings/set/dummy");
+    my $req = HTTP::Request->new(POST => $uri, $post_header, '{"value": "dummy"}');
     my $res = $cb->($req);
 
     my $perl_res = decode_json $res->content();

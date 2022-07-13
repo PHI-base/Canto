@@ -51,9 +51,9 @@ if ($local_suffix eq 'deploy') {
   GetOptions ("initialise=s" => \$init_dir);
 
   if ($init_dir) {
-    my $config = Canto::Config->new("${lc_app_name}.yaml");
+    my $config = Canto::Config->new(["${lc_app_name}.yaml"]);
     Canto::Meta::Util::initialise_app($config, $init_dir);
-    print "Initialisation succesful, now run $0 without arguments\n";
+    print "Initialisation successful, now run $0 without arguments\n";
     exit(0);
   } else {
     if (!Canto::Meta::Util::app_initialised($lc_app_name)) {
@@ -122,12 +122,14 @@ for (my $i = 0; $i < @ARGV; $i++) {
   }
 }
 
-if (!defined $port) {
+if (!defined $port && !defined $ENV{SERVER_STARTER_PORT}) {
   $port = 5000;
   push @ARGV, '--port', $port;
 }
 
 $runner->parse_options(@ARGV);
 
-print "\rStarting Canto server on port $port\n";
+if (!defined $ENV{SERVER_STARTER_PORT}) {
+  print "\rStarting Canto server on port $port\n";
+}
 $runner->run($app);

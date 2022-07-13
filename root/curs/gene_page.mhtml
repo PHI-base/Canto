@@ -14,14 +14,26 @@ var genes_in_session = <% $genes_in_session_js |n %>;
 <div class="curs-box curs-half-width-section">
   <div class="curs-box-title">
 Choose curation type for <% $gene->display_name() %>:
-    <& /curs/inline_help.mhtml, key => 'gene_page_choose_curation_type' &>
+    <help-icon key="gene_page_choose_curation_type"></help-icon>
   </div>
   <div class="curs-box-body">
   <ul class="annotation-start">
 % for my $annotation_type (@annotation_type_list) {
+%   my $annotation_type_name = $annotation_type->{name};
 %   my $type_display_name = $annotation_type->{display_name};
 %   if ($annotation_type->{feature_type} eq 'gene') {
-%     my $annotation_type_name = $annotation_type->{name};
+%    if ($annotation_type->{category} eq 'interaction') {
+    <li class="annotation-type">
+      <annotation-quick-add annotation-type-name="<% $annotation_type->{name} %>"
+                            feature-id="<% $gene->gene_id() %>"
+                            link-label="<% ucfirst($annotation_type->{display_name}) %>"
+                            feature-type="<% $annotation_type->{feature_type} %>"
+                            feature-display-name="<% $gene_proxy->display_name() %>"
+                            feature-taxon-id="<% $gene_proxy->taxonid() %>">
+      </annotation-quick-add>
+      <help-icon key="<% $annotation_type->{name} . '_definition' %>"></help-icon>
+    </li>
+%    } else {
 %     my $action_path = "$curs_root_uri/feature/gene/annotate/$gene_id/" .
 %       "start/$annotation_type_name";
 %     my $title = $annotation_type->{help_text} // '';
@@ -36,25 +48,43 @@ Choose curation type for <% $gene->display_name() %>:
       </a>
       <help-icon key="<% $annotation_type->{name} . '_definition' %>"></help-icon>
 %     }
+% 
+%     if ($annotation_type->{category} eq 'ontology') {
+    <span class="curs-annotation-quick-add" ng-show="advancedMode()">
       <annotation-quick-add annotation-type-name="<% $annotation_type->{name} %>"
                             feature-type="gene" feature-id="<% $gene->gene_id() %>"
-                            feature-display-name="<% $gene_proxy->display_name() %>">
+                            feature-display-name="<% $gene_proxy->display_name() %>"
+                            feature-taxon-id="<% $gene_proxy->taxonid() %>">
       </annotation-quick-add>
+    </span>
+%     }
     </li>
+%    }
 %   } else {
+%     if (!$pathogen_host_mode) {
+%       if ($annotation_type->{category} eq 'ontology') {
   <li class="annotation-type">
-    <a href="#" ng-click="singleAlleleQuick('<% $gene->display_name() |n %>', '<% $gene->primary_identifier() |n %>', <% $gene->gene_id() |n%>)">
+    <a href="#" ng-click="singleAlleleQuick('<% $gene->display_name() |n %>', '<% $gene->primary_identifier() |n %>', <% $gene->gene_id() |n%>, '<%$annotation_type_name%>', <% $taxon_id %>)">
       Single allele <% ucfirst $type_display_name %>
     </a>
     <help-icon key="gene_page_single_allele"></help-icon>
   </li>
-  <li class="annotation-type">
-    <a href='<% "$curs_root_uri/genotype_manage" %>'>
-      Multiple allele <% ucfirst $type_display_name %>
-    </a>
-    <help-icon key="gene_page_multi_allele"></help-icon>
-  </li>
+%       }
+%     }
 %   }
+% }
+% if ($pathogen_host_mode) {
+%   my $organism_role = $gene->organism_details()->{pathogen_or_host};
+%   my $role_annotation_type_name = 'pathogen_phenotype';
+%   if ($organism_role eq 'host') {
+%     $role_annotation_type_name = 'host_phenotype';
+%   }
+    <li class="annotation-type">
+      <a href="#" ng-click="singleAlleleQuick('<% $gene->display_name() |n %>', '<% $gene->primary_identifier() |n %>', <% $gene->gene_id() |n%>, '<%$role_annotation_type_name%>', <% $taxon_id %>)">
+        Single allele phenotype
+      </a>
+      <help-icon key="gene_page_single_allele"></help-icon>
+    </li>
 % }
   </ul>
   </div>
@@ -91,7 +121,7 @@ Gene details
 % if ($st->{multi_organism_mode}) {
       <tr>
         <td class="title">Organism</td>
-        <td><% $gene->organism()->full_name() %></td>
+        <td><% $gene->organism_details()->{full_name} %></td>
       </tr>
 % } 
     </table>
@@ -104,6 +134,13 @@ Gene details
 Genotypes for <% $gene->display_name() %> in this session
   </div>
   <div class="curs-box-body">
+%     if (!$pathogen_host_mode) {
+    <div style="margin: 0.2em 0 0.5em 0;">
+      <a href='<% "$curs_root_uri/genotype_manage" %>'>
+        Genotype management
+      </a>
+    </div>
+%     }
     <single-gene-genotype-list gene-primary-identifier="'<% $gene->primary_identifier() %>'"></single-gene-genotype-list>
   </div>
 </div>
@@ -111,7 +148,7 @@ Genotypes for <% $gene->display_name() %> in this session
 
 <div class="clearall"/>
 
-<a href="<% $summary_url %>" type="button" class="btn btn-primary curs-back-button"><% $finish_text %></a>
+<genotype-and-summary-nav role="<% $gene->organism_details()->{pathogen_or_host} %>"></genotype-and-summary-nav>
 
 <annotation-table-list feature-type-filter="gene" feature-id-filter="<% $gene_id %>"
                        feature-filter-display-name="<% $gene->display_name() %>"></annotation-table-list>
@@ -121,8 +158,9 @@ Genotypes for <% $gene->display_name() %> in this session
 <%init>
 my $gene_id = $gene->gene_id();
 my $gene_name = $gene->{primary_name} // '';
+my $taxon_id = $gene->taxonid();
 
-my $gene_org_name = $gene->organism()->full_name();
+my $gene_org_name = $gene->organism_details()->{full_name};
 
 my $sysid_url = undef;
 my $sysid_url_title = undef;
@@ -140,8 +178,9 @@ if (defined $org_config) {
 my $st = $c->stash();
 
 my $gene_count = $st->{gene_count};
-my $finish_text = '<- Back to summary';
+my $finish_text = 'Go to summary';
 my $read_only_curs = $st->{read_only_curs};
+my $pathogen_host_mode = $st->{pathogen_host_mode};
 
 my $is_admin = $st->{is_admin_user};
 my $genotype_annotation_configured = $st->{genotype_annotation_configured};

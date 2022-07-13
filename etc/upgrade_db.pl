@@ -115,13 +115,13 @@ if (!Canto::Meta::Util::app_initialised($app_name, $suffix)) {
 }
 
 
-my $config = Canto::Config::get_config();
+my $config = Canto::Config::get_config(upgrading => 1);
 my $track_schema = Canto::TrackDB->new(config => $config,
                                         disable_foreign_keys => 0);
 
 my $current_version = Canto::DBUtil::get_schema_version($track_schema);
 
-if ($current_version + 1 != $new_version) {
+if ($new_version ne 'latest' && $current_version + 1 != $new_version) {
   warn "can only upgrade from version ", ($new_version - 1), " schema to $new_version, " .
     "database is currently version $current_version\n" .
     "exiting ...\n";
@@ -152,6 +152,9 @@ sub _unreplace_commas
   return $string;
 }
 
+sub upgrade_to
+{
+  $new_version = shift;
 given ($new_version) {
   when (3) {
     $dbh->do("
@@ -544,7 +547,7 @@ CREATE TABLE allele_genotype (
           $annotation_allele->update();
 
           my $genotype_name = $allele_data->{gene}->primary_identifier() .
-            '-' . $annotation_allele->long_identifier();
+            '-' . $annotation_allele->long_identifier($config);
 
           if (exists $seen_genotype_names{$genotype_name}) {
             my $extra_index = 2;
@@ -560,7 +563,7 @@ CREATE TABLE allele_genotype (
 
           my $background = '';
 
-          $annotation_genotype = $genotype_manager->make_genotype($curs_key, $genotype_name, $background,
+          $annotation_genotype = $genotype_manager->make_genotype($genotype_name, $background,
                                                         [$annotation_allele]);
 
           $seen_genotype_names{$genotype_name} = 1;
@@ -586,5 +589,27 @@ CREATE TABLE allele_genotype (
     $db_upgrade->upgrade_to($new_version);
   }
 }
+}
 
-Canto::DBUtil::set_schema_version($track_schema, $new_version);
+if ($new_version eq 'latest') {
+  if ($current_version == $config->{schema_version}) {
+    print "Database is up to date at version $current_version\n";
+    exit 0;
+  }
+
+  if ($current_version > $config->{schema_version}) {
+    print "Database version ($current_version) is ahead of the code (" .
+      $config->{schema_version} . qq|) - try "git pull"\n|;
+  }
+
+  for (my $ver = $current_version + 1;
+       $ver <= $config->{schema_version};
+       $ver++) {
+    print "upgrading to version $ver\n";
+    upgrade_to($ver);
+    Canto::DBUtil::set_schema_version($track_schema, $ver);
+  }
+} else {
+  upgrade_to($new_version);
+  Canto::DBUtil::set_schema_version($track_schema, $new_version);
+}

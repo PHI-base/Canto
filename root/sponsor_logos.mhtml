@@ -1,41 +1,21 @@
-
-
-
+% for my $sponsor (@extra_sponsors) {
 <div class="sponsor">
-<a href="http://www.wellcome.ac.uk">
+  <a href="<% $sponsor->{link_url} %>">
+    <img src="<% $sponsor->{logo_url} %>"/>
+  </a>
+</div>
+% }
+<div class="sponsor">
+  <a href="http://www.wellcome.ac.uk">
     <img src="<% $c->uri_for('/static/images/wt_logo.png') %>"/>
-</a>
+  </a>
 </div>
 <div class="sponsor">
-<a href="http://www.cam.ac.uk">
+  <a href="http://www.cam.ac.uk">
     <img src="<% $c->uri_for('/static/images/uni_of_cam.png') %>"/>
-</a>
-</div>
-<div class="sponsor">
-<a href="http://www.phi-base.org/">
-    <img src="<% $c->uri_for('/static/images/phi-base_logo.png') %>"/>
-</a>
+  </a>
 </div>
 
-<div class="sponsor">
-<a href="https://www.bbsrc.ac.uk/">
-    <img src="<% $c->uri_for('/static/images/bbsrc.png') %>"/>
-</a>
-</div>
-<div class="sponsor">
-<a href="http://www.elixir-uk.org">
-    <img src="<% $c->uri_for('/static/images/elixir-uk-logo.png') %>"/>
-</a>
-</div>
-
-<div class="sponsor">
-<a href="http://www.phytopathdb.org/">
-    <img src="<% $c->uri_for('/static/images/phytopath_logo.png') %>"/>
-</a>
-</div>
-
-<div class="sponsor">
-<a href="http://www.rothamsted.ac.uk">
-    <img src="<% $c->uri_for('/static/images/rreslogo.png') %>"/>
-</a>
-</div>
+<%init>
+my @extra_sponsors = @{$c->config()->{extra_sponsors} || []};
+</%init>

@@ -60,17 +60,27 @@ sub _get_url
   $ua->agent($config->get_application_name());
 
   my $req = HTTP::Request->new(GET => $url);
-  my $res = $ua->request($req);
 
-  if ($res->is_success) {
-    if ($res->content()) {
-      return $res->decoded_content();
+  my $res;
+
+  for my $try (1..5) {
+    $res = $ua->request($req);
+
+    if ($res->is_success) {
+      if ($res->content()) {
+        my $decoded_content = $res->decoded_content(charset => 'utf-8');
+        return $decoded_content;
+      } else {
+        die "query returned no content: $url";
+      }
     } else {
-      die "query returned no content: $url";
+      warn "failed to get $url\n  - retrying\n";
+      # wait a bit and try again
+      sleep 1.5;
     }
-  } else {
-    die "Couldn't read from $url: ", $res->status_line, "\n";
   }
+
+  die "Couldn't read from $url: ", $res->status_line, "\n";
 }
 
 =head2 get_pubmed_xml_by_ids
@@ -84,6 +94,7 @@ sub _get_url
  Returns : The XML from pubmed
 
 =cut
+
 sub get_pubmed_xml_by_ids
 {
   my $config = shift;
@@ -107,6 +118,7 @@ sub get_pubmed_xml_by_ids
  Returns : XML containing the matching IDs
 
 =cut
+
 sub get_pubmed_ids_by_query
 {
   my $config = shift;
@@ -123,6 +135,40 @@ sub get_pubmed_ids_by_query
 
 our $PUBMED_PREFIX = "PMID";
 
+sub _remove_tags {
+  my $attrs = shift;
+  my $text = shift;
+
+  my $label = undef;
+
+  if ($attrs && $attrs =~ /label="([^"]+)/i) {
+    $label = $1;
+  }
+
+  $text =~ s/<[^>]+>/ /g;
+
+  if ($label) {
+    return "$label: $text";
+  } else {
+    return $text;
+  }
+}
+
+my %month_map =
+  ("Jan" => "01",
+   "Feb" => "02",
+   "Mar" => "03",
+   "Apr" => "04",
+   "May" => "05",
+   "Jun" => "06",
+   "Jul" => "07",
+   "Aug" => "08",
+   "Sep" => "09",
+   "Oct" => "10",
+   "Nov" => "11",
+   "Dec" => "12",
+   );
+
 =head2 load_pubmed_xml
 
  Usage   : my $count = Canto::Track::PubmedUtil::load_pubmed_xml($schema, $xml);
@@ -135,6 +181,7 @@ our $PUBMED_PREFIX = "PMID";
  Returns : the count of number of publications loaded
 
 =cut
+
 sub load_pubmed_xml
 {
   my $schema = shift;
@@ -143,6 +190,13 @@ sub load_pubmed_xml
 
   if (!defined $load_type) {
     croak("no load_type passed to load_pubmed_xml()");
+  }
+
+  # Awful hack to remove italics and other tags in titles and abstracts.
+  # This prevents parsing problems, see:
+  # https://github.com/pombase/pombase-chado/issues/663
+  for my $tag_name ('ArticleTitle', 'AbstractText') {
+    $content =~ s|<$tag_name(?:\s+([^>]+"))?>(.+?)</$tag_name>|"<$tag_name>" . _remove_tags($1, $2) . "</$tag_name>"|iegs;
   }
 
   my $load_util = Canto::Track::LoadUtil->new(schema => $schema);
@@ -215,7 +269,11 @@ sub load_pubmed_xml
                           map {
                             if (ref $_ eq 'HASH') {
                               if (defined $_->{content}) {
-                                $_->{content};
+                                if (ref $_->{content}) {
+                                  ();
+                                } else {
+                                  $_->{content};
+                                }
                               } else {
                                 ();
                               }
@@ -278,7 +336,11 @@ sub load_pubmed_xml
             my $cite_date = join (' ', @date_bits);
             $citation .= ' ' . $cite_date;
 
-            $publication_date = join (' ', reverse @date_bits);
+            if ($date_bits[1] && $month_map{$date_bits[1]}) {
+              $date_bits[1] = $month_map{$date_bits[1]};
+            }
+
+            $publication_date = join (' ', @date_bits);
           }
           $citation .= ';';
           if (defined $journal_issue->{Volume}) {
@@ -348,6 +410,7 @@ sub _process_batch
  Returns : a count of the number of publications found and loaded
 
 =cut
+
 sub load_by_ids
 {
   my $config = shift;
@@ -361,6 +424,8 @@ sub load_by_ids
     my @process_ids = map { s/^PMID://; $_; } splice(@$ids, 0, $max_batch_size);
 
     $count += _process_batch($config, $schema, [@process_ids], $load_type);
+
+    sleep 10;
   }
 
   return $count;
@@ -379,6 +444,7 @@ sub load_by_ids
  Returns : a count of the number of publications found and loaded
 
 =cut
+
 sub load_by_query
 {
   my $config = shift;
@@ -407,6 +473,19 @@ sub load_by_query
 
   my @ids = @{$res_hash->{IdList}->{Id}};
 
+  my %db_ids = ();
+
+  map {
+    my $uniquename = $_->uniquename();
+    if ($uniquename =~ /^$PUBMED_PREFIX:(\d+)$/) {
+      $db_ids{$1} = 1;
+    }
+  } $schema->resultset('Pub')->search({}, { columns => ['uniquename'] })->all();
+
+  @ids = grep {
+    !$db_ids{$_};
+  } @ids;
+
   while (@ids) {
     my @process_ids = splice(@ids, 0, $max_batch_size);
 
@@ -417,6 +496,7 @@ sub load_by_query
 }
 
 
+
 =head2
 
  Usage   : my $count = Canto::Track::PubmedUtil::add_missing_fields();
@@ -424,9 +504,10 @@ sub load_by_query
            for the missing information and then set the titles
  Args    : $config - the config object
            $schema - the TrackDB object
- Return  : the number of titles added, dies on error
+ Returns : the number of publications updated, dies on error
 
 =cut
+
 sub add_missing_fields
 {
   my $config = shift;
@@ -450,6 +531,37 @@ sub add_missing_fields
   return load_by_ids($config, $schema,
                      [map { $_->uniquename() } $rs->all()],
                      'admin_load');
+}
+
+
+=head2 update_field
+
+ Usage   : my $count = Canto::Track::PubmedUtil::update_field($config, $schema,
+                                                              "publication_date");
+ Function: Set the field with the given name to undef/null in the database, then
+           re-initialise it from the PubMed data
+ Args    : $config - the config object
+           $schema - the TrackDB object
+           $field_name - the field to re-initialise
+ Returns : the number of publications updated, dies on error
+
+=cut
+
+sub update_field
+{
+  my $config = shift;
+  my $schema = shift;
+  my $field_name = shift;
+
+  if ($field_name eq 'uniquename') {
+    die "can't update uniquename field\n";
+  }
+
+  my $pub_rs = $schema->resultset('Pub');
+
+  $pub_rs->update({ $field_name => undef });
+
+  return add_missing_fields($config, $schema);
 }
 
 1;

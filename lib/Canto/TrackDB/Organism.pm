@@ -38,13 +38,7 @@ __PACKAGE__->table("organism");
   is_nullable: 1
   size: 255
 
-=head2 genus
-
-  data_type: 'varchar'
-  is_nullable: 0
-  size: 255
-
-=head2 species
+=head2 scientific_name
 
   data_type: 'varchar'
   is_nullable: 0
@@ -68,9 +62,7 @@ __PACKAGE__->add_columns(
   { data_type => "integer", is_auto_increment => 1, is_nullable => 0 },
   "abbreviation",
   { data_type => "varchar", is_nullable => 1, size => 255 },
-  "genus",
-  { data_type => "varchar", is_nullable => 0, size => 255 },
-  "species",
+  "scientific_name",
   { data_type => "varchar", is_nullable => 0, size => 255 },
   "common_name",
   { data_type => "varchar", is_nullable => 1, size => 255 },
@@ -137,9 +129,24 @@ __PACKAGE__->has_many(
   { cascade_copy => 0, cascade_delete => 0 },
 );
 
+=head2 strains
 
-# Created by DBIx::Class::Schema::Loader v0.07033 @ 2013-10-13 23:27:26
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:wk36EYv283I8VuQo781Otg
+Type: has_many
+
+Related object: L<Canto::TrackDB::Strain>
+
+=cut
+
+__PACKAGE__->has_many(
+  "strains",
+  "Canto::TrackDB::Strain",
+  { "foreign.organism_id" => "self.organism_id" },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
+
+
+# Created by DBIx::Class::Schema::Loader v0.07046 @ 2018-08-27 02:36:09
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:TQ8JttP6mWZKK/Suo/7oAw
 
 use Carp;
 
@@ -147,7 +154,7 @@ use Carp;
 sub full_name {
   my $self = shift;
 
-  return $self->genus() . ' ' . $self->species();
+  return $self->scientific_name();
 }
 
 # You can replace this text with custom content, and it will be preserved on regeneration

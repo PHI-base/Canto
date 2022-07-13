@@ -57,11 +57,16 @@ __PACKAGE__->table("allele");
   data_type: 'text'
   is_nullable: 1
 
+=head2 comment
+
+  data_type: 'text'
+  is_nullable: 1
+
 =head2 gene
 
   data_type: 'integer'
   is_foreign_key: 1
-  is_nullable: 0
+  is_nullable: 1
 
 =cut
 
@@ -78,8 +83,10 @@ __PACKAGE__->add_columns(
   { data_type => "text", is_nullable => 1 },
   "name",
   { data_type => "text", is_nullable => 1 },
+  "comment",
+  { data_type => "text", is_nullable => 1 },
   "gene",
-  { data_type => "integer", is_foreign_key => 1, is_nullable => 0 },
+  { data_type => "integer", is_foreign_key => 1, is_nullable => 1 },
 );
 
 =head1 PRIMARY KEY
@@ -125,6 +132,36 @@ __PACKAGE__->has_many(
   { cascade_copy => 0, cascade_delete => 0 },
 );
 
+=head2 allele_notes
+
+Type: has_many
+
+Related object: L<Canto::CursDB::AlleleNote>
+
+=cut
+
+__PACKAGE__->has_many(
+  "allele_notes",
+  "Canto::CursDB::AlleleNote",
+  { "foreign.allele" => "self.allele_id" },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
+
+=head2 allelesynonyms
+
+Type: has_many
+
+Related object: L<Canto::CursDB::Allelesynonym>
+
+=cut
+
+__PACKAGE__->has_many(
+  "allelesynonyms",
+  "Canto::CursDB::Allelesynonym",
+  { "foreign.allele" => "self.allele_id" },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
+
 =head2 gene
 
 Type: belongs_to
@@ -137,12 +174,17 @@ __PACKAGE__->belongs_to(
   "gene",
   "Canto::CursDB::Gene",
   { gene_id => "gene" },
-  { is_deferrable => 0, on_delete => "NO ACTION", on_update => "NO ACTION" },
+  {
+    is_deferrable => 0,
+    join_type     => "LEFT",
+    on_delete     => "NO ACTION",
+    on_update     => "NO ACTION",
+  },
 );
 
 
-# Created by DBIx::Class::Schema::Loader v0.07045 @ 2016-08-21 19:35:12
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:yoNuind8vIy8fIACFy4lCw
+# Created by DBIx::Class::Schema::Loader v0.07049 @ 2019-10-08 11:24:16
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:L8iHcJQfZHkX+adKaRSTGw
 
 __PACKAGE__->many_to_many('genotypes' => 'allele_genotypes',
                           'genotype');
@@ -161,8 +203,10 @@ use Canto::Curs::Utils;
 sub display_name
 {
   my $self = shift;
+  my $config = shift;
 
-  return Canto::Curs::Utils::make_allele_display_name($self->name(),
+  return Canto::Curs::Utils::make_allele_display_name($config,
+                                                      $self->name(),
                                                       $self->description(),
                                                       $self->type());
 }
@@ -170,7 +214,7 @@ sub display_name
 =head2 long_identifier
 
  Usage   : my $long_identifier = $allele->long_identifier();
- Function: Return a long display string for this allele that includes the expresion
+ Function: Return a long display string for this allele that includes the expression
            eg. "ssm4KE(G40A,K43E)[overexpression]"
 
 =cut
@@ -178,10 +222,17 @@ sub display_name
 sub long_identifier
 {
   my $self = shift;
+  my $config = shift;
 
-  my $ret = $self->display_name();
+  my $ret = $self->display_name($config);
 
-  $ret .= ($self->expression() ? '[' . $self->expression() . ']' : '');
+  my $expression = '';
+
+  if ($self->expression()) {
+    $expression = '[' . ($self->expression() =~ s/^wild type product level.*/WT level/ir) . ']';
+  }
+
+  $ret .= $expression;
 
   return $ret;
 }

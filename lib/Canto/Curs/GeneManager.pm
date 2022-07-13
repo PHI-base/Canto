@@ -74,8 +74,8 @@ sub _filter_existing_genes
  Usage   : my %results = $self->create_genes_from_lookup($lookup_result);
  Function: Create genes in the CursDB from the result of calling lookup().
            Only creates those genes that aren't there already.
- Args    : $lookup_result - the result of a sucessful call to
-           GeneLookup::lookup()
+ Args    : $lookup_result - the result of a sucessful call to GeneLookup::lookup()
+           $sort_by_name - sort the genes by name before storing
  Return  : A hash of the new genes, the keys are the primary_identifiers and
            values are the the Gene objects
 
@@ -85,6 +85,7 @@ sub create_genes_from_lookup
 {
   my $self = shift;
   my $result = shift;
+  my $sort_by_name = shift;
 
   my $schema = $self->curs_schema();
 
@@ -97,11 +98,20 @@ sub create_genes_from_lookup
         @genes = $self->_filter_existing_genes(@genes);
 
         for my $gene (@genes) {
-          my $org_full_name = $gene->{organism_full_name};
           my $org_taxonid = $gene->{organism_taxonid};
+          my $pathogen_or_host = 'unknown';
+
+          if ($self->config()->{pathogen_host_mode}) {
+            $pathogen_or_host = 'pathogen';
+            for my $host_taxonid (@{$self->config()->{host_organism_taxonids}}) {
+              if ($org_taxonid eq $host_taxonid) {
+                $pathogen_or_host = 'host';
+              }
+            }
+          }
+
           my $curs_org =
-            Canto::CursDB::Organism::get_organism($schema, $org_full_name,
-                                                   $org_taxonid);
+            Canto::CursDB::Organism::get_organism($schema, $org_taxonid);
 
           my $primary_identifier = $gene->{primary_identifier};
 
@@ -154,8 +164,7 @@ sub find_and_create_genes
     $result = $adaptor->lookup(
       {
         search_organism => {
-          genus => $config->{instance_organism}->{genus},
-          species => $config->{instance_organism}->{species},
+          scientific_name => $config->{instance_organism}->{scientific_name},
         }
       },
       [@search_terms]);

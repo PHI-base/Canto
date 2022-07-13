@@ -1,11 +1,8 @@
 "use strict";
 
-/*global $,document,application_root,window,curs_root_uri,read_only_curs */
+/*global $,document,application_root,window,curs_root_uri,curs_people_autocomplete_list */
 
-function last(a) {
-  return a[a.length-1];
-}
-
+// eslint-disable-next-line no-unused-vars
 function trim(a) {
   a=a.replace(/^\s+/,''); return a.replace(/\s+$/,'');
 }
@@ -20,7 +17,7 @@ function loadingStart() {
 
 function loadingEnd() {
   loadingDiv.hide();
-  $('#ajax-loading-overlay').hide();  
+  $('#ajax-loading-overlay').hide();
 }
 
 $(document).ready(function() {
@@ -53,8 +50,9 @@ $(document).ready(function() {
   });
 });
 
+// eslint-disable-next-line no-unused-vars
 function make_ontology_complete_url(annotation_type, extensionLookup) {
-  var url = application_root + 'ws/lookup/ontology/' + annotation_type + '?def=1';
+  var url = application_root + '/ws/lookup/ontology/' + annotation_type + '?def=1';
   if (extensionLookup) {
     url += '&extension_lookup=' + extensionLookup;
   }
@@ -94,6 +92,7 @@ function make_confirm_dialog(link, prompt, confirm_button_label, cancel_button_l
   confirmDialog.dialog("open");
 }
 
+// eslint-disable-next-line no-unused-vars
 var ferret_choose = {
   show_autocomplete_def: function(event, ui) {
     $('.curs-autocomplete-definition').remove();
@@ -122,21 +121,10 @@ var ferret_choose = {
   hide_autocomplete_def: function() {
     $('.curs-autocomplete-definition').remove();
   }
-}
-
-
-var canto_util = {
-  show_message : function(title, message) {
-    var html = '<div>' + message + '</div>';
-    $('#curs-dialog').html(html);
-    $('#curs-dialog').dialog({ modal: true,
-                               title: title});
-  }
 };
 
-$(document).ready(function() {
-  $('input[type=checkbox]').shiftcheckbox();
 
+$(document).ready(function() {
   $('a.canto-select-all').click(function () {
     $(this).closest('div').find('input:checkbox').attr('checked', true);
   });
@@ -149,7 +137,7 @@ $(document).ready(function() {
     window.location.href = curs_root_uri + '/finish_form';
   });
 
-  $('#curs-pause-session').click(function () {
+  $('.curs-pause-session').click(function () {
     window.location.href = curs_root_uri + '/pause_curation';
   });
 
@@ -179,7 +167,7 @@ $(document).ready(function() {
 
   $('#curs-pub-assign-popup-dialog').click(function () {
     $('#curs-pub-assign-dialog').dialog({ modal: true,
-                                          title: 'Set the corresponding author ...',
+                                          title: 'Set the corresponding author...',
                                           width: '40em' });
   });
 
@@ -196,7 +184,7 @@ $(document).ready(function() {
   });
 
   $('#curs-pub-triage-this-pub').click(function () {
-    window.location.href = application_root + 'tools/triage?triage-return-pub-id=' + $(this).val();
+    window.location.href = application_root + '/tools/triage?triage-return-pub-id=' + $(this).val();
   });
 
   $('#curs-pub-assign-cancel,#curs-pub-create-session-cancel,.curs-dialog-cancel').click(function () {
@@ -213,7 +201,7 @@ $(document).ready(function() {
       $picker_div.find('.curs-person-picker-person-id').val(data.person_id);
     });
     $popup.dialog({
-      title: 'Add a person ...',
+      title: 'Add a person...',
       modal: true });
 
     $popup.find("form").ajaxForm({
@@ -240,21 +228,44 @@ $(document).ready(function() {
       person_picker_add_person(this, new_person_name);
       return false;
     }
-    
+
     $dialog.dialog('close');
     return true;
   });
 
-  function add_jTruncate($element) {
-    $element.jTruncate({
-      length: 300,
-      minTrail: 50,
-      moreText: "[show all]",
-      lessText: "[hide]"
+  function truncate($element) {
+    $element.each(function() {
+      var obj = $(this);
+      var body = obj.html();
+
+      if (body.length > 320) {
+	var splitLoc = body.indexOf(' ', 300);
+	if (splitLoc != -1) {
+	  var splitLocation = body.indexOf(' ', 300);
+	  var str1 = body.substring(0, splitLocation);
+	  var str2 = body.substring(splitLocation, body.length - 1);
+	  obj.html(str1 + '<span class="truncate_ellipsis">...</span> <span class="truncate_more">' + str2 + '</span>');
+	  obj.find('.truncate_more').css("display", "none");
+	  obj.append(
+	    '<div class="clearboth">' +
+	      '<a href="#" class="truncate_more_link">more</a>' +
+	      '</div>'
+	  );
+
+	  var moreLink = $('.truncate_more_link', obj);
+	  var moreContent = $('.truncate_more', obj);
+	  var ellipsis = $('.truncate_ellipsis', obj);
+	  moreLink.click(function() {
+	    moreContent.show();
+	    moreLink.remove();
+	    ellipsis.remove();
+	  });
+	}
+      }
     });
   }
 
-  add_jTruncate($('.non-key-attribute'));
+  truncate($('.non-key-attribute'));
 
   if (typeof curs_people_autocomplete_list != 'undefined') {
     $(".curs-person-picker .curs-person-picker-input").autocomplete({

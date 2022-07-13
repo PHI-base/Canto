@@ -47,6 +47,8 @@ has gene_manager => (is => 'rw', isa => 'Canto::Curs::GeneManager',
 with 'Canto::Role::Configurable';
 with 'Canto::Curs::Role::GeneResultSet';
 
+use Canto::Curs::GeneProxy;
+
 sub _build_gene_manager
 {
   my $self = shift;
@@ -63,10 +65,17 @@ sub _create_allele_uniquename
 
   my $prefix = "$gene_primary_identifier:$curs_key-";
 
-  my $rs = $schema->resultset('Allele')
-    ->search({ 'gene.primary_identifier' => $gene_primary_identifier,
-               'me.primary_identifier' => { -like => "$prefix%" } },
-             { join => 'gene' });
+  my $rs;
+
+  if ($gene_primary_identifier =~ /^aberration/) {
+    $rs = $schema->resultset('Allele')
+      ->search({ 'me.primary_identifier' => { -like => "$prefix%" } });
+  } else {
+    $rs = $schema->resultset('Allele')
+      ->search({ 'gene.primary_identifier' => $gene_primary_identifier,
+                 'me.primary_identifier' => { -like => "$prefix%" } },
+               { join => 'gene' });
+  }
 
   my $new_index = 1;
 
@@ -79,6 +88,63 @@ sub _create_allele_uniquename
    }
 
    return "$gene_primary_identifier:$curs_key-$new_index";
+}
+
+sub set_allele_synonyms
+{
+  my $schema = shift;
+  my $allele = shift;
+  my $allele_synonyms = shift;
+
+  my $rs = $allele->allelesynonyms()->search();
+
+  my @existing = ();
+
+  while (defined (my $syn = $rs->next())) {
+    if ($syn->edit_status() eq 'existing') {
+      push @existing, $syn->synonym();
+    }
+  }
+
+  $rs->search({ edit_status => 'new' })->delete();
+
+  map {
+    my $syn = $_;
+    if ($syn->{edit_status} eq 'new' ||
+      !grep { $_ eq $syn->{synonym} } @existing) {
+      $schema->create_with_type('Allelesynonym', {
+        allele => $allele->allele_id(),
+        synonym => $syn->{synonym},
+        edit_status => $syn->{edit_status},
+      });
+    }
+  } @$allele_synonyms;
+}
+
+sub autopopulate_name
+{
+  my $allele_type = shift;
+  my $config = shift;
+  my $gene = shift;
+
+  my $allele_config = $config->{allele_types}->{$allele_type};
+
+  if (!defined $allele_config) {
+    return undef;
+  }
+
+  my $name_template = $allele_config->{autopopulate_name};
+
+  if (!$name_template) {
+    return undef;
+  }
+
+  my $gene_proxy =
+    Canto::Curs::GeneProxy->new(config => $config, cursdb_gene => $gene);
+
+  my $gene_display_name = $gene_proxy->display_name();
+
+  return $name_template =~ s/\@\@gene_display_name\@\@/$gene_display_name/r;
 }
 
 # create a new Allele from the data or return an existing matching allele
@@ -112,6 +178,8 @@ sub allele_from_json
   my $expression = $json_allele->{expression};
   my $allele_type = $json_allele->{type};
   my $gene_id = $json_allele->{gene_id};
+  my $comment = $json_allele->{comment};
+  my $notes = $json_allele->{notes};
 
   if ($primary_identifier) {
     # lookup existing allele
@@ -163,12 +231,17 @@ sub allele_from_json
     }
   }
 
+  my @allele_synonyms = @{$json_allele->{synonyms} // []};
+
   # find existing or make a new allele in the CursDB
 
   my %search_args = (
     type => $allele_type,
-    gene => $gene_id,
   );
+
+  if ($allele_type !~ /^aberration/) {
+    $search_args{gene} = $gene_id;
+  }
 
   my $allele_rs = $schema->resultset('Allele')
     ->search({ %search_args });
@@ -177,26 +250,48 @@ sub allele_from_json
     if (($allele->name() // '') eq ($name // '') &&
         ($allele->description() // '') eq ($description // '') &&
         ($allele->expression() // '') eq ($expression // '')) {
+      set_allele_synonyms($schema, $allele, \@allele_synonyms);
+
       return $allele;
     }
   }
 
-  if (!$gene_id) {
+  if (!$gene_id && $allele_type !~ /^aberration/) {
     use Data::Dumper;
     confess "internal error, no gene_id for: ", Dumper([$json_allele]);
   }
 
-  my $gene = $schema->find_with_type('Gene', $gene_id);
+  my $new_primary_identifier;
 
-  my $new_primary_identifier =
-    _create_allele_uniquename($gene->primary_identifier(),
-                              $schema, $curs_key);
+  if ($allele_type =~ /^aberration/) {
+    my $prefix;
+
+    if ($name) {
+      $prefix = "$name-$allele_type";
+    } else {
+      $prefix = $allele_type;
+    }
+
+    $prefix =~ s/\s+/_/g;
+
+    $new_primary_identifier = _create_allele_uniquename($prefix, $schema, $curs_key);
+  } else {
+    my $gene = $schema->find_with_type('Gene', $gene_id);
+
+    $new_primary_identifier =
+      _create_allele_uniquename($gene->primary_identifier(), $schema, $curs_key);
+
+    if (!$name) {
+      $name = autopopulate_name($allele_type, $config, $gene);
+    }
+  }
 
   my %create_args = (
     primary_identifier => $new_primary_identifier,
     %search_args,
     name => $name || undef,
     description => $description || undef,
+    comment => $comment || undef,
     expression => $expression || undef,
   );
 
@@ -204,7 +299,129 @@ sub allele_from_json
     die "internal error, underscore in allele type in Canto - probably an problem";
   }
 
-  return $schema->create_with_type('Allele', \%create_args);
+  my $allele = $schema->create_with_type('Allele', \%create_args);
+
+  set_allele_synonyms($schema, $allele, \@allele_synonyms);
+
+  if ($notes) {
+    while (my ($key, $value) = each %$notes) {
+      $self->_set_note_with_allele($allele, $key, $value);
+    }
+  }
+
+  return $allele;
 }
 
+=head2 create_simple_allele
+
+ Usage   : my $allele = $allele_manager->create_simple_allele(...);
+ Function: Create an Allele object given some allele properties and a gene
+ Args    : $primary_identifier - the primary key in the database
+           $allele_type
+           $name
+           $description
+           $expression
+           $gene - a Gene object
+           $synonyms
+ Returns : the new Allele
+
+=cut
+
+sub create_simple_allele
+{
+  my $self = shift;
+
+  my $primary_identifier = shift;
+  my $allele_type = shift;
+  my $name = shift;
+  my $description = shift;
+  my $gene = shift;
+  my $synonyms = shift;
+
+  my %create_args = (
+    primary_identifier => $primary_identifier,
+    type => $allele_type,
+    name => $name || undef,
+    description => $description || undef,
+  );
+
+  if ($allele_type !~ /^aberration/) {
+    $create_args{gene} = $gene->gene_id();
+  }
+
+  my $allele = $self->curs_schema()->create_with_type('Allele', \%create_args);
+
+  if ($synonyms) {
+    for my $synonym (@$synonyms) {
+      my %synonym_create_args = (
+        allele => $allele->allele_id(),
+        synonym => $synonym,
+        edit_status => 'existing'
+      );
+
+      $self->curs_schema()->create_with_type('Allelesynonym', \%synonym_create_args);
+
+    }
+  }
+
+  return $allele;
+}
+
+sub _set_note_with_allele
+{
+  my $self = shift;
+  my $allele = shift;
+  my $key = shift;
+  my $value = shift;
+
+  my $existing = $allele->allele_notes()->find({ key => $key });
+
+  if ($existing) {
+    if (defined $value) {
+      $existing->value($value);
+      $existing->update();
+    } else {
+      $existing->delete();
+    }
+  } else {
+    if (defined $value) {
+      $self->curs_schema()
+        ->create_with_type('AlleleNote',
+                           {
+                             allele => $allele->allele_id(),
+                             key => $key,
+                             value => $value,
+                           });
+    }
+  }
+}
+
+=head2 set_note
+
+ Usage   : $allele_manager->set_note($allele_primary_identifier, $key, $value);
+ Function: Add a note to an Allele.  If a note with $key as the key exists
+           replace the note.  If $value is undef, remove the note.
+ Args    : $allele_primary_identifier
+           $key - any string
+           $value - any string
+ Returns : nothing
+
+=cut
+
+sub set_note
+{
+  my $self = shift;
+  my $allele_primary_identifier = shift;
+  my $key = shift;
+  my $value = shift;
+
+  my $allele = $self->curs_schema()->resultset('Allele')
+    ->find({ primary_identifier => $allele_primary_identifier });
+
+  if (!$allele) {
+    die qq(can't find allele with primary_identifier "$allele_primary_identifier");
+  }
+
+  $self->_set_note_with_allele($allele, $key, $value);
+}
 1;

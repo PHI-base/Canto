@@ -53,9 +53,10 @@ sub get_owltools_results
 
   my ($temp_fh, $temp_filename) = tempfile();
 
+  use autodie qw(system);
+
   for my $filename (@obo_file_names) {
-    system ("owltools $filename --save-closure-for-chado $temp_filename") == 0
-      or die "can't open pipe from owltools: $!";
+    system ("owltools $filename --save-closure-for-chado $temp_filename");
 
     open my $owltools_out, '<', $temp_filename
       or die "can't open owltools output from $temp_filename: $!\n";
@@ -114,13 +115,34 @@ sub get_subset_data
   my %domain_subsets_to_store = ();
   my %range_subsets_to_store = ();
   my %exclude_subsets_to_store = ();
+  my %extra_subsets_to_store = ();
+
+  my $process_excluded = sub {
+    my $subset_rel_and_id = shift;
+
+    if ($subset_rel_and_id =~ /^(?:\w+)\((\S+)\)$/) {
+      my $subset_id = $1;
+      $exclude_subsets_to_store{$subset_id} = 1;
+    } else {
+      die qq[subset term ID "$subset_rel_and_id" must include a relation name, \n
+eg. "is_a(GO:0055085)"];
+    }
+  };
+
+  my %seen_subset_rels = ();
 
   for my $conf (@conf) {
-    $domain_subsets_to_store{$conf->{domain}} = $conf->{subset_rel};
+    my $conf_subset_rels = $conf->{subset_rel};
+    map {
+      $seen_subset_rels{$_} = 1;
+    } @$conf_subset_rels;
+
+    $domain_subsets_to_store{$conf->{domain}} = $conf_subset_rels;
 
     if ($conf->{exclude_subset_ids}) {
       map {
-        $exclude_subsets_to_store{$_} = 1;
+        my $subset_rel_and_id = $_;
+        $process_excluded->($subset_rel_and_id);
       } @{$conf->{exclude_subset_ids}};
     }
 
@@ -139,10 +161,41 @@ sub get_subset_data
     } @{$conf->{range}};
   }
 
+  for my $annotation_type (@{$config->{annotation_type_list}}) {
+    my $term_evidence_codes = $annotation_type->{term_evidence_codes};
+
+    if ($term_evidence_codes) {
+      for my $rel_and_termid (map { $_->{constraint} } @$term_evidence_codes) {
+        my ($rel, $termid) = ();
+
+        if ($rel_and_termid =~ /([\S\(]+)\((\S+)\)-(\S+)$/) {
+          $rel = $1;
+          $termid = $2;
+          my $exclude_id_str = $3;
+          map {
+            $process_excluded->($_);
+          } split /&/, $exclude_id_str;
+        } else {
+          ($rel, $termid) = ($rel_and_termid =~ /^([\S\(]+)\((\S+)\)$/);
+
+          if (!defined $rel) {
+            die qw(error in configuration "$rel_and_termid" - should be: "rel(term_id)");
+          }
+        }
+
+        $extra_subsets_to_store{$termid} //= [];
+
+        if (!grep { $_ eq $rel } @{$extra_subsets_to_store{$termid}}) {
+          push @{$extra_subsets_to_store{$termid}}, $rel;
+        }
+      }
+    }
+  }
+
   my %subsets = map {
     ($_, { $_ => { is_a => 1 } })
   } (keys %domain_subsets_to_store, keys %range_subsets_to_store,
-     keys %exclude_subsets_to_store);
+     keys %exclude_subsets_to_store, keys %extra_subsets_to_store);
 
   my @owltools_results = $self->get_owltools_results(@obo_file_names);
 
@@ -150,6 +203,10 @@ sub get_subset_data
     my ($subject, $rel_type, $depth, $object) = @$result;
 
     $rel_type =~ s/^OBO_REL://;
+
+    if (!$seen_subset_rels{$rel_type}) {
+      next;
+    }
 
     if ($domain_subsets_to_store{$object} &&
         grep { $_ eq $rel_type } @{$domain_subsets_to_store{$object}}) {
@@ -161,6 +218,10 @@ sub get_subset_data
     }
 
     if ($exclude_subsets_to_store{$object}) {
+      $subsets{$subject}{$object}{$rel_type} = 1;
+    }
+
+    if ($extra_subsets_to_store{$object}) {
       $subsets{$subject}{$object}{$rel_type} = 1;
     }
   }

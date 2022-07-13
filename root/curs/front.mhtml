@@ -6,20 +6,22 @@ $pub
 @annotation_type_list
 $current_user_is_admin
 $read_only_curs => 0
-$message_to_curators
+$external_notes => undef
 $total_annotation_count
 </%args>
 
 <div ng-controller="CursFrontPageCtrl" id="curs-front-page">
 <div>
   <div class="row">
-    <div class="curs-front-gene-list {{getAnnotationMode() == 'advanced' ? 'col-sm-4 col-md-4' : 'col-sm-6 col-md-6'}}">
-<& /curs/gene_list.mhtml, pub => $pub &>
+    <div class="curs-front-gene-list col-sm-5 col-md-5">
+<& /curs/front_gene_section.mhtml, pub => $pub &>
     </div>
-    <div ng-if="getAnnotationMode() == 'advanced'" class="col-sm-3 col-md-3 ng-cloak">
+% if (!$read_only_curs) {
+    <div class="col-sm-3 col-md-3 ng-cloak">
 <& /curs/front_page_quick_links.mhtml, annotation_type_list => \@annotation_type_list &>
     </div>
-    <div class="curs-front-pub-details {{getAnnotationMode() == 'advanced' ? 'col-sm-5 col-md-5' : 'col-sm-6 col-md-6'}}">
+% }
+    <div class="curs-front-pub-details col-sm-4 col-md-4">
 <& /pub_details.mhtml, pub => $pub &>
    </div>
   </div>
@@ -32,14 +34,15 @@ $total_annotation_count
 %   }
 % } else {
 % if ($state eq Canto::Controller::Curs::CURATION_IN_PROGRESS) {
-%     if ($total_annotation_count > 0) {
+<div ng-show="enableSubmitButton()">
 <button type="button" id="curs-finish-session" class="btn btn-primary curs-finish-button">Submit to curators</button>
-<button type="button" id="curs-pause-session" class="btn btn-primary curs-finish-button">Pause curation</button>
-%     } else {
-<form action="<% $finish_form_url %>" class="curs-finish-buttons" method="POST"
+<button type="button" class="curs-pause-session btn btn-primary curs-finish-button">Pause curation</button>
+</div>
+<form ng-hide="enableSubmitButton()"
+      action="<% $finish_form_url %>" class="curs-finish-buttons" method="POST"
       ng-controller="SubmitToCuratorsCtrl" ng-init='init(<% $no_annotations_reasons_init_js |n%>)'>
   <div>
-    <button type="button" class="btn btn-primary" id="curs-pause-session">Pause curation</button>
+    <button type="button" class="curs-pause-session btn btn-primary">Pause curation</button>
     <input class="btn btn-primary button ng-cloak" type="submit"
            ng-disabled="!data.noAnnotation || !validReason()" id="curs-finish-session"
            title="{{ validReason() ? '' : 'Please add annotation or check the no results box' }}"
@@ -55,7 +58,7 @@ $total_annotation_count
     <div>
     <select name="reason" ng-model="data.reason"
             ng-options="r as r for r in noAnnotationReasons">
-      <option value="">Please choose a reason ...</option>
+      <option value="">Choose a reason...</option>
     </select>
     </div>
     <div>
@@ -64,12 +67,11 @@ $total_annotation_count
     <input type="hidden" name="reasonText" value="{{data.reason}}"/>
 % # reason if "Other" is chosen from the <select>
     <input ng-show="data.reason === 'Other'" size="30"
-           placeholder="Please type a reason here ..." 
+           placeholder="Type a reason"
            type="text" name="otherReason" ng-model="data.otherReason"/>
     </div>
   </div>
 </form>
-%     }
 </div>
 % } else {
 
@@ -92,18 +94,57 @@ $total_annotation_count
 <button type="button" id="curs-cancel-approval" class="btn btn-primary curs-finish-button">Cancel approval</button>
 </div>
 % }
-%   if (defined $message_to_curators) {
-<div class="curs-inline-message-to-curators">
-  <a href="#" onclick="javascript:canto_util.show_message('Message to curators', '<% Canto::WebUtil::escape_inline_js($message_to_curators) %>')">Display message to curators ...</a>
-</div>
-%   }
 % }
 
-<annotation-table-list></annotation-table-list>
+<div ng-if="messageForCuratorsIsReady()" class="curs-inline-message-to-curators">
+% if ($current_user_is_admin && !$read_only_curs) {
+  <a href="#" ng-click="editMessageToCurators()">
+    <span ng-show="messageForCurators">Edit</span>
+    <span ng-show="!messageForCurators">Add</span>
+    <% lc $message_for_curators_label %>
+  </a>
+% } else {
+%   if (!$show_message_for_curators_on_front_page) {
+  <a href="#" ng-click="viewMessageToCurators()">Display <% lc $message_for_curators_label %></a>
+%   }
+% }
+</div>
+
+% if (($always_show_external_notes_section || $external_notes) && $current_user_is_admin) {
+<div class="external-notes curs-box">
+  <div class="curs-box-title">
+    <% $external_notes_label %>
+  </div>
+  <div class="curs-box-body">
+% if ($external_notes) {
+%   for my $note (@{$external_notes // []}) {
+    <p>
+      <% $note %>
+    </p>
+%   }
+% } else {
+   <p>[none]</p>
+% }
+  </div>
+</div>
+% }
+
+% if ($show_message_for_curators_on_front_page) {
+<div class="ng-cloak" ng-if="messageForCurators" class="external-notes curs-box">
+  <div class="curs-box-title">
+    <% $message_for_curators_label %>
+  </div>
+  <div class="curs-box-body">
+    {{messageForCurators}}
+  </div>
+</div>
+% }
+
+<annotation-table-list show-metagenotype-link="true"></annotation-table-list>
 
 % if ($annotation_count > 0) {
 <div id="curs-annotation-download">
-  <a href="<% $download_action %>">Download all annotation (Zip format) ...</a>
+  <a href="<% $download_action %>">Download all annotations (Zip format)...</a>
 </div>
 % }
 </div>
@@ -121,4 +162,13 @@ my $no_annotations_reasons_init_js =
   Data::JavaScript::Anon->anon_dump($config->{curs_config}->{no_annotation_reasons});
 
 my $finish_form_url = $curs_root_uri . '/finish_session';
+
+my $external_notes_label = $config->{external_notes_label} || "External notes";
+my $message_for_curators_label = $config->{message_to_curators_label} || "Message for curators";
+
+my $always_show_external_notes_section = $config->{always_show_external_notes_section};
+
+my $show_message_for_curators_on_front_page =
+  $config->{show_message_for_curators_on_front_page} && $current_user_is_admin;
+
 </%init>

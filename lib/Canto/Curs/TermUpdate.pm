@@ -99,6 +99,25 @@ sub _cached_lookup_by_name
   return $res;
 }
 
+sub _cached_lookup_by_id
+{
+  my $self = shift;
+  my $termid = shift;
+
+  my $lookup = $self->lookup();
+
+  if (exists $self->cache()->{terms}->{$termid}) {
+    return $self->cache()->{terms}->{$termid};
+  }
+
+  my $res = $lookup->lookup_by_id(id => $termid);
+
+  $self->cache()->{terms}->{$termid} = $res;
+
+  return $res;
+}
+
+
 =head2 update_curs_terms
 
  Usage   : my $term_update = Canto::Curs::TermUpdate->new(config => $config);
@@ -122,29 +141,70 @@ sub update_curs_terms
   while (defined (my $annotation = $annotation_rs->next())) {
     my $data;
 
+    my $changed = 0;
+
     try {
       $data = $annotation->data();
     } catch {
       croak "failed to inflate data column: $_\n";
     };
 
-    if (defined $data->{conditions}) {
-      my $changed = 0;
+    # fix any alt_id
+    my $termid = $data->{term_ontid};
+    if ($termid) {
+      # lookup check the alt_id too
+      my $res = $self->_cached_lookup_by_id($termid);
+      if (defined $res) {
+        if ($termid ne $res->{id}) {
+          $data->{term_ontid} = $res->{id};
+          $changed = 1;
+        }
+      }
+    }
 
+    if (defined $data->{conditions}) {
       # replace term names with the ID if we know it otherwise assume that the
       # user has made up a condition
       map { my $name = $_;
-            my $res = $self->_cached_lookup_by_name('phenotype_condition', $name);
+            my $res = $self->_cached_lookup_by_name($config->{phenotype_condition_namespace}, $name);
             if (defined $res) {
               $_ = $res->{id};
               $changed = 1;
             }
           } @{$data->{conditions}};
+    }
 
-      if ($changed) {
-        $annotation->data($data);
-        $annotation->update();
-      }
+    my $extension = $data->{extension};
+
+    if (defined $extension) {
+      map {
+        my $orPart = $_;
+        map {
+          my $andPart = $_;
+          if ($andPart->{rangeType} && $andPart->{rangeType} eq 'Ontology') {
+            my $termid = $andPart->{rangeValue};
+            my $res = $self->_cached_lookup_by_id($termid);
+
+            if ($res) {
+              if ($termid ne $res->{id}) {
+                $andPart->{rangeValue} = $res->{id};
+                $changed = 1;
+              }
+
+              if (!$andPart->{rangeDisplayName} ||
+                    $andPart->{rangeDisplayName} ne $res->{name}) {
+                $andPart->{rangeDisplayName} = $res->{name};
+                $changed = 1;
+              }
+            }
+          }
+        } @$orPart;
+      } @$extension;
+    }
+
+    if ($changed) {
+      $annotation->data($data);
+      $annotation->update();
     }
   }
 

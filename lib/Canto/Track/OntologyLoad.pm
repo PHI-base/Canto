@@ -190,7 +190,7 @@ sub _parse_source
   my $file_name;
   my $fh;
 
-  if ($source =~ m|http://|) {
+  if ($source =~ m|https?://|) {
     ($fh, $file_name) = tempfile('/tmp/downloaded_ontology_file_XXXXX',
                                  SUFFIX => '.obo');
     my $rc = getstore($source, $file_name);
@@ -212,6 +212,8 @@ sub _parse_source
            $ont_load->load($file_name, $index, [qw(exact related)]);
  Function: Load the contents an OBO file into the schema
  Args    : $source - the file name or URL of an obo format file
+           $cvs_to_delete - names of existing CVs to delete during the loading
+                            process
            $index - the index to add the terms to (optional)
            $synonym_types_ref - a array ref of synonym types that should be
                                 added to the index
@@ -222,6 +224,7 @@ sub load
 {
   my $self = shift;
   my $sources = shift;
+  my $cvs_to_delete = shift;
   my $index = shift;
   my $synonym_types_ref = shift;
 
@@ -236,6 +239,9 @@ sub load
   my $config_subsets_to_ignore =
     $self->config()->{ontology_namespace_config}{subsets_to_ignore};
 
+  my $do_not_annotate_subsets =
+    $self->config()->{ontology_namespace_config}{do_not_annotate_subsets} || [];
+
   my @subsets_to_ignore = ();
 
   if ($config_subsets_to_ignore) {
@@ -246,6 +252,12 @@ sub load
           push @subsets_to_ignore, $subset_id
         }
       }
+    }
+  }
+
+  for my $subset_id (@$do_not_annotate_subsets) {
+    if (!grep { $subset_id eq $_ } @subsets_to_ignore) {
+      push @subsets_to_ignore, $subset_id;
     }
   }
 
@@ -288,10 +300,11 @@ sub load
 
   my %cvs = ();
   map {
+    s/ /_/g;
     $cvs{$_} = 1;
   } $ontology_data->get_cv_names();
 
-  # delete existing terms
+  # delete existing terms that are in a CV we are loading
   map {
      _delete_term_by_cv($schema, $_, 0);
   } keys %cvs;
@@ -300,6 +313,14 @@ sub load
   map {
     _delete_term_by_cv($schema, $_, 1);
   } keys %cvs;
+
+  # delete terms and rels from CVs specified by the user
+  map {
+     _delete_term_by_cv($schema, $_, 0);
+  } @$cvs_to_delete;
+  map {
+    _delete_term_by_cv($schema, $_, 1);
+  } @$cvs_to_delete;
 
   # create this object after deleting as LoadUtil has a dbxref cache (that
   # is a bit ugly ...)
@@ -326,7 +347,7 @@ sub load
   my %term_namespace = ();
 
   for my $term (@sorted_terms_to_store) {
-    my $cv_name = $term->namespace() // 'external';
+    my $cv_name = ($term->namespace() =~ s/ /_/gr) // 'external';
     my $term_acc = $term->id();
 
     $term_namespace{$term_acc} = $cv_name;
@@ -355,7 +376,7 @@ sub load
   }
 
   for my $term (@sorted_terms_to_store) {
-    my $cv_name = $term->namespace() // 'external';
+    my $cv_name = ($term->namespace() =~ s/ /_/gr) // 'external';
     my $comment = $term->comment();
 
     my $term_name = $term->name();
@@ -370,14 +391,21 @@ sub load
       next;
     }
 
-      my $cvterm = $load_util->get_cvterm(cv_name => $cv_name,
-                                          term_name => $term_name,
-                                          ontologyid => $term->id(),
-                                          definition => $term->def(),
-                                          alt_ids => $term->alt_id(),
-                                          is_obsolete => $term->is_obsolete(),
-                                          is_relationshiptype =>
-                                            $term->is_relationshiptype());
+    my %args = (
+      cv_name => $cv_name,
+      term_name => $term_name,
+      ontologyid => $term->id(),
+      alt_ids => $term->alt_id(),
+      is_obsolete => $term->is_obsolete(),
+      is_relationshiptype =>
+        $term->is_relationshiptype(),
+    );
+
+    if ($term->def()) {
+      $args{definition} = $term->def()->{definition};
+    }
+
+    my $cvterm = $load_util->get_cvterm(%args);
 
     if ($term->is_relationshiptype()) {
       $relationship_cvterms{$term_name} = $cvterm;
@@ -482,6 +510,7 @@ sub load
   }
 
   for my $cv_name (sort keys %cvs) {
+    $cv_name =~ s/ /_/g;
     my $cv = $load_util->find_or_create_cv($cv_name);
 
     my $date = Canto::Curs::Utils::get_iso_date();

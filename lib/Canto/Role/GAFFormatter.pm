@@ -39,6 +39,8 @@ the Free Software Foundation, either version 3 of the License, or
 
 use Moose::Role;
 use Archive::Zip qw(:CONSTANTS :ERROR_CODES);
+use Try::Tiny;
+use IO::String;
 
 use Canto::Curs::ExtensionData;
 
@@ -63,11 +65,12 @@ sub get_all_curs_annotation_zip
   my $zip = Archive::Zip->new();
   my %all_results_by_type = ();
 
-  my $session_count = $curs_resultset->count();
+  my $session_count = 0;
 
   while (defined (my $curs = $curs_resultset->next())) {
     my $curs_key = $curs->curs_key();
-    my $cursdb = Canto::Curs::get_schema_for_key($config, $curs_key);
+    my $cursdb = Canto::Curs::get_schema_for_key($config, $curs_key,
+                                                 { cache_connection => 0 });
 
     my $results = $self->get_all_annotation_tsv($config, $cursdb);
 
@@ -76,6 +79,8 @@ sub get_all_curs_annotation_zip
         $all_results_by_type{$type_name} //= '';
         $all_results_by_type{$type_name} .= $results->{$type_name}
       }
+
+      $session_count++;
     }
   }
 
@@ -91,7 +96,7 @@ sub get_all_curs_annotation_zip
   my $io = IO::String->new();
   $zip->writeToFileHandle($io);
 
-  return ${$io->string_ref()}
+  return ($session_count, ${$io->string_ref()})
 }
 
 =head2 get_curs_annotation_zip
@@ -115,6 +120,13 @@ sub get_curs_annotation_zip
   if (keys %$results > 0) {
     my $zip = Archive::Zip->new();
     for my $annotation_type_name (keys %$results) {
+
+      my $annotation_type = $config->{annotation_types}->{$annotation_type_name};
+
+      if ($annotation_type->{category} ne 'ontology') {
+        next;
+      }
+
       my $annotation_tsv = $results->{$annotation_type_name};
       my $file_name = "$annotation_type_name.tsv";
       my $member = $zip->addString($annotation_tsv, $file_name);
@@ -152,13 +164,36 @@ sub get_annotation_table_tsv
 
   my $annotation_type = $config->{annotation_types}->{$annotation_type_name};
 
-  my ($completed_count, $annotations_ref, $columns_ref) =
-    Canto::Curs::Utils::get_annotation_table($config, $schema,
-                                              $annotation_type_name);
+  if (!defined $annotation_type) {
+    die qq|no configuration for annotation type "$annotation_type_name"\n|;
+  }
+
+  my $ontology_lookup = Canto::Track::get_adaptor($config, 'ontology');
+
+  my ($completed_count, $annotations_ref, $columns_ref);
+
+  try {
+    ($completed_count, $annotations_ref, $columns_ref) =
+      Canto::Curs::Utils::get_annotation_table($config, $schema,
+                                               $annotation_type_name);
+
+  } catch {
+    my $conn = $schema->storage()->connect_info()->[0];
+    warn "error writing annotation table for $conn: $_";
+  };
+
+  if (!defined $completed_count) {
+    return;
+  }
+
   my @annotations = @$annotations_ref;
   my %common_values = %{$config->{export}->{gene_association_fields}};
 
   $common_values{db_object_type} = $annotation_type->{feature_type};
+
+  if ($common_values{db_object_type} eq 'gene') {
+    $common_values{db_object_type} = 'protein';
+  }
 
   my @ontology_column_names =
     qw(db gene_identifier gene_name_or_identifier
@@ -175,11 +210,6 @@ sub get_annotation_table_tsv
        db_object_type
        creation_date_short assigned_by extension);
 
-  my @interaction_column_names =
-    qw(gene_identifier interacting_gene_identifier
-       gene_taxonid interacting_gene_taxonid evidence_code
-       publication_uniquename score phenotypes submitter_comment);
-
   my @column_names;
 
   if ($annotation_type->{category} eq 'ontology') {
@@ -189,15 +219,31 @@ sub get_annotation_table_tsv
       @column_names = @phenotype_column_names;
     }
   } else {
-    @column_names = @interaction_column_names;
+    return '';
   }
 
-  my $db = $config->{export}->{gene_association_fields}->{db};
+  my $db_prefix = $config->{export}->{gene_association_fields}->{db};
 
   my $results = '';
 
   for my $annotation (@annotations) {
     next unless $annotation->{completed};
+
+
+    my $extension_string = '';
+    my @extra_qualifiers = ();
+
+    try {
+
+    if (defined $annotation->{extension}) {
+      my $qualifier_list;
+
+      ($extension_string, $qualifier_list) =
+        Canto::Curs::ExtensionData::as_strings($ontology_lookup, $schema, $db_prefix,
+                                               $annotation->{extension});
+
+      @extra_qualifiers = @$qualifier_list;
+    }
 
     $results .= join "\t", map {
       my $column_name = $_;
@@ -214,36 +260,40 @@ sub get_annotation_table_tsv
       }
       if ($column_name eq 'with_or_from_identifier') {
         if (defined $val && length $val > 0) {
-          $val = "$db:$val";
+          $val = "$db_prefix:$val";
         } else {
           $val = '';
         }
       }
 
       if ($column_name eq 'qualifiers') {
+        my @quals = ();
+
         if (defined $val) {
-          $val = join(",", @$val);
-        } else {
-          $val = '';
+          @quals = @$val;
         }
+
+        push @quals, @extra_qualifiers;
+
+        $val = join(",", @quals);
       }
 
       if ($column_name eq 'extension') {
-        if (defined $val) {
-          my $extension_obj = Canto::Curs::ExtensionData->new(structure => $val);
-          $val = $extension_obj->as_string();
-        } else {
-          $val = '';
-        }
+        $val = $extension_string;
       }
 
       if (!defined $val) {
-        die "no value for field $column_name";
+        die "no value for field $column_name\n";
       }
 
       $val;
     } @column_names;
     $results .= "\n";
+
+    } catch {
+      my $conn = $schema->storage()->connect_info()->[0];
+      warn "error writing output line for $conn: $_";
+    }
   }
 
   return $results;

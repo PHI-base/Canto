@@ -45,21 +45,35 @@ use JSON;
 
 use Canto::Curs::Serialise;
 
+my %cursprops_cache = ();
+
 sub _get_cursprops
 {
+  my $track_schema = shift;
   my $curs = shift;
+  my $options = shift;
 
-  my $rs = $curs->cursprops();
-  my @ret = ();
+  if (keys %cursprops_cache == 0) {
+    my $rs = $track_schema->resultset('Cursprop')
+      ->search({}, { prefetch => ['type', 'curs'] });
 
-  while (defined (my $prop = $rs->next())) {
-    push @ret, {
-      type => $prop->type()->name(),
-      value => $prop->value(),
-    };
+    while (defined (my $prop = $rs->next())) {
+      my $prop_type_name = $prop->type()->name();
+
+      if (!$options->{export_curator_names} &&
+          $prop_type_name eq 'approver_name') {
+        next;
+      }
+
+      push @{$cursprops_cache{$prop->curs()->curs_key()}},
+        {
+          type => $prop_type_name,
+          value => $prop->value(),
+        };
+    }
   }
 
-  return \@ret;
+  return $cursprops_cache{$curs->curs_key} // [];
 }
 
 sub _get_curation_sessions
@@ -70,16 +84,36 @@ sub _get_curation_sessions
 
   my %ret_map = ();
 
-  my $curs_rs = $options->{curs_resultset} // $schema->resultset('Curs');
+  my $curs_rs = $options->{curs_resultset} //
+    $schema->resultset('Curs')->search({}, { prefetch => { pub => 'triage_status' }});
 
   while (defined (my $curs = $curs_rs->next())) {
     my $curs_key = $curs->curs_key();
+
+    my $props = _get_cursprops($schema, $curs, $options);
+
+    my $curs_status = undef;
+
+    for my $prop (@$props) {
+      if ($prop->{type} eq 'annotation_status') {
+        $curs_status = $prop->{value};
+      }
+    }
+
+    my $triage_status_name = $curs->pub()->triage_status()->name();
+
+    next unless
+      (grep {
+        $_ eq $triage_status_name;
+      } @{$config->{export}->{canto_json}->{pub_triage_status_to_export}}) ||
+      $curs_status eq 'APPROVED';
+
     my $data;
     if ($options->{stream_mode}) {
       $data = undef;
     } else {
-      $data = Canto::Curs::Serialise::perl($config, $schema, $curs_key, $options);
-      my $props = _get_cursprops($curs);
+      $data = Canto::Curs::Serialise::perl($config, $schema, $curs_key, $options,
+                                           $curs_status);
 
       for my $prop_data (@$props) {
         my $prop_type = $prop_data->{type};
@@ -121,21 +155,27 @@ sub _get_name
   }
 }
 
+my %pubprops_cache = ();
+
 sub _get_pubprops
 {
+  my $track_schema = shift;
   my $pub = shift;
 
-  my $rs = $pub->pubprops();
-  my @ret = ();
+  if (keys %pubprops_cache == 0) {
 
-  while (defined (my $prop = $rs->next())) {
-    push @ret, {
-      type => $prop->type()->name(),
-      value => $prop->value(),
-    };
+    my $rs = $track_schema->resultset('Pubprop')
+      ->search({}, { prefetch => ['type', 'pub' ] });
+
+    while (defined (my $prop = $rs->next())) {
+      push @{$pubprops_cache{$prop->pub()->uniquename()}}, {
+        type => $prop->type()->name(),
+        value => $prop->value(),
+      };
+    }
   }
 
-  return \@ret;
+  return $pubprops_cache{$pub->uniquename()} // [];
 }
 
 sub _get_pub_curation_statuses
@@ -157,18 +197,43 @@ sub _get_pub_curation_statuses
 
 sub _get_pubs
 {
+  my $config = shift;
   my $schema = shift;
   my $options = shift;
 
-  my $rs = $schema->resultset('Pub');
+  my $rs = $schema->resultset('Pub')->search({}, { prefetch => 'triage_status' });
   my %ret = ();
 
   while (defined (my $pub = $rs->next())) {
+    my $pubprops = _get_pubprops($schema, $pub);
+
+    my $curs_status = undef;
+
+  CURS:
+    for my $curs ($pub->curs()->all()) {
+      my $props = _get_cursprops($schema, $curs);
+
+      for my $prop (@$props) {
+        if ($prop->{type} eq 'annotation_status') {
+          $curs_status = $prop->{value};
+          last CURS;
+        }
+      }
+    }
+
+    my $triage_status_name = $pub->triage_status()->name();
+
+    next unless
+      (grep {
+        $_ eq $triage_status_name;
+      } @{$config->{export}->{canto_json}->{pub_triage_status_to_export}}) ||
+      $curs_status && $curs_status eq 'APPROVED';
+
     my %pub_hash = (
       type => $pub->type()->name(),
       corresponding_author => _get_name($pub->corresponding_author()),
       triage_status => _get_name($pub->triage_status()),
-      properties => _get_pubprops($pub),
+      properties => $pubprops,
       curation_statuses => _get_pub_curation_statuses($pub),
     );
     if ($options->{all_data}) {
@@ -259,9 +324,7 @@ sub json
   if ($options->{all_data}) {
     $hash = {
       curation_sessions => $curation_sessions_hash,
-      publications => _get_pubs($schema, $options),
-      people => _get_people($schema),
-      labs => _get_labs($schema),
+      publications => _get_pubs($config, $schema, $options),
     };
   } else {
     $hash = {
@@ -269,11 +332,20 @@ sub json
     };
   }
 
+  $hash->{schema_version} = 1;
+
   my $encoder = JSON->new()->pretty(1)->canonical(1);
 
   my $curs_count = scalar(keys(%{$hash->{curation_sessions}}));
 
-  return ($curs_count, $encoder->encode($hash));
+  my @exported_session_keys = grep {
+    my $session_key = $_;
+    my $annotation_status =
+      $hash->{curation_sessions}->{$session_key}->{metadata}->{annotation_status};
+    $annotation_status eq 'APPROVED';
+  } keys(%{$hash->{curation_sessions}});
+
+  return ($curs_count, $encoder->encode($hash), \@exported_session_keys);
 }
 
 1;

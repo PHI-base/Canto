@@ -32,7 +32,7 @@ my $subset_prop_rs = $prop_rs
   ->search({ 'type.name' => 'canto_subset' },
            { join => 'type', prefetch => 'cvterm', order_by => [ 'type.name', 'value' ] });
 
-is ($subset_prop_rs->count(), 12);
+is ($subset_prop_rs->count(), 14);
 
 
 my $canto_root_subset_count = $subset_prop_rs->count();
@@ -48,8 +48,7 @@ $subset_process->process_subset_data($track_schema, $subset_data);
 
 my $after_cvtermprop_count = $prop_rs->count();
 
-is ($after_cvtermprop_count, 53);
-
+is ($after_cvtermprop_count, 55);
 
 sub get_subset_props
 {
@@ -68,6 +67,10 @@ my @subset_cvtermprops = get_subset_props();
 my @expected_subset_props =
   (
     [
+      'abnormal cell morphology',
+      'is_a(FYPO:0000005)'
+    ],
+    [
       'biological_process',
       'is_a(canto_root_subset)'
     ],
@@ -84,12 +87,36 @@ my @expected_subset_props =
       'is_a(GO:0016023)'
     ],
     [
+      'disease formation phenotype',
+      'is_a(canto_root_subset)'
+    ],
+    [
+      'disease formation phenotype',
+      'is_a(qc_do_not_annotate)'
+    ],
+   [
+      'fission yeast phenotype condition',
+      'is_a(canto_root_subset)'
+    ],
+     [
+      'glucose rich medium',
+      'is_a(Grouping_terms)'
+    ],
+    [
+      'growth medium',
+      'is_a(Grouping_terms)'
+    ],
+    [
       'hydrogen peroxide transmembrane transport',
       'is_a(GO:0006810)'
     ],
     [
       'hydrogen peroxide transmembrane transport',
       'is_a(GO:0055085)'
+    ],
+    [
+      'medium components',
+      'is_a(Grouping_terms)'
     ],
     [
       'molecular_function',
@@ -100,32 +127,12 @@ my @expected_subset_props =
       'is_a(GO:0034762)'
     ],
     [
-      'negative regulation of transmembrane transport',
-      'negatively_regulates(GO:0055085)'
-    ],
-    [
-      'negative regulation of transmembrane transport',
-      'regulates(GO:0055085)'
-    ],
-    [
       'nucleocytoplasmic transporter activity',
       'is_a(GO:0005215)'
     ],
     [
-      'phenotype condition',
-      'is_a(canto_root_subset)'
-    ],
-    [
       'positive regulation of transmembrane transport',
       'is_a(GO:0034762)'
-    ],
-    [
-      'positive regulation of transmembrane transport',
-      'positively_regulates(GO:0055085)'
-    ],
-    [
-      'positive regulation of transmembrane transport',
-      'regulates(GO:0055085)'
     ],
     [
       'protein modification',
@@ -148,8 +155,8 @@ my @expected_subset_props =
       'is_a(GO:0034762)'
     ],
     [
-      'regulation of transmembrane transport',
-      'regulates(GO:0055085)'
+      'rich medium',
+      'is_a(Grouping_terms)'
     ],
     [
       'stored secretory granule',
@@ -172,10 +179,6 @@ my @expected_subset_props =
       'is_a(GO:0022857)'
     ],
     [
-      'transmembrane transporter activity',
-      'part_of(GO:0055085)'
-    ],
-    [
       'transport',
       'is_a(GO:0006810)'
     ],
@@ -187,7 +190,7 @@ my @expected_subset_props =
       'transporter activity',
       'is_a(GO:0005215)'
     ]
-  );
+);
 
 cmp_deeply(\@subset_cvtermprops, \@expected_subset_props);
 

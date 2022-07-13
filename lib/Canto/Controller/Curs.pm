@@ -51,6 +51,7 @@ use Carp qw(cluck);
 use JSON;
 use List::MoreUtils;
 use Try::Tiny;
+use Data::JavaScript::Anon;
 
 use Canto::Track;
 use Canto::Curs::Utils;
@@ -63,6 +64,8 @@ use Canto::EmailUtil;
 use Canto::Curs::State;
 use Canto::Curs::ServiceUtils;
 use Canto::Util qw(trim);
+
+use Canto::Curs 'EXTERNAL_NOTES_KEY';
 
 use constant {
   MESSAGE_FOR_CURATORS_KEY => 'message_for_curators',
@@ -154,8 +157,12 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
   if ($state eq APPROVAL_IN_PROGRESS) {
     my $approver_name = $self->get_metadata($schema, 'approver_name');
     my $approver_email = $self->get_metadata($schema, 'approver_email');
-    $st->{notice} =
+    push @{$st->{notice}},
       "Session is being checked by $approver_name <$approver_email>";
+  }
+
+  if (defined $config->{message_of_the_day}) {
+    push @{$st->{notice}}, $config->{message_of_the_day};
   }
 
   $st->{is_admin_session} =
@@ -163,6 +170,25 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
 
   $st->{instance_organism} = $config->{instance_organism};
   $st->{multi_organism_mode} = !defined $st->{instance_organism};
+  $st->{strains_mode} = $config->{strains_mode};
+  $st->{pathogen_host_mode} = $config->{pathogen_host_mode};
+  $st->{split_genotypes_by_organism} = $config->{split_genotypes_by_organism};
+  $st->{show_genotype_management_genes_list} = $config->{show_genotype_management_genes_list};
+
+  $st->{flybase_mode} = $config->{flybase_mode};
+  $st->{annotation_figure_field} = $config->{annotation_figure_field};
+
+  $st->{show_metagenotype_links} = 0;
+  $st->{edit_organism_page_valid} = 0;
+
+  if ($st->{pathogen_host_mode}) {
+    ($st->{show_metagenotype_links}, $st->{show_host_genotype_link},
+     $st->{has_pathogen_genes},
+     $st->{has_host_genotypes}, $st->{has_pathogen_genotypes},
+     $st->{has_pathogen_host_metagenotypes},
+     $st->{edit_organism_page_valid}) =
+      _metagenotype_flags($config, $schema);
+  }
 
   my $with_gene_evidence_codes =
     { map { ( $_, 1 ) }
@@ -193,6 +219,8 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
   $st->{message_to_curators} =
     $self->get_metadata($schema, MESSAGE_FOR_CURATORS_KEY);
 
+  my $external_notes = $self->get_metadata($schema, Canto::Curs->EXTERNAL_NOTES_KEY);
+
   # enabled by default and disabled on /session_reassigned page
   $st->{show_curator_in_title} = 1;
 
@@ -206,7 +234,7 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
       $message = "Review only - this session has been exported so no changes are possible";
     } else {
       if ($state eq NEEDS_APPROVAL || $state eq APPROVAL_IN_PROGRESS) {
-        $message = "Review only - this session has been submitted for approval so no changes are possible";
+        $message = "Review only - this session has been submitted for approval.  Please contact the helpdesk to make further changes.";
       } else {
         $message = "Review only - this session can be viewed but not edited";
       }
@@ -221,10 +249,10 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
   if (defined $current_user && $current_user->is_admin()) {
     $st->{current_user_is_admin} = 1;
 
-    my $annotation_mode = $self->get_metadata($schema, 'annotation_mode');
+    $self->set_metadata($schema, 'annotation_mode', 'advanced');
 
-    if (!defined $annotation_mode) {
-      $self->set_metadata($schema, 'annotation_mode', 'advanced');
+    if ($external_notes) {
+      $st->{external_notes} = [split /\n+/, $external_notes];
     }
   } else {
     $st->{current_user_is_admin} = 0;
@@ -237,12 +265,18 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
     $use_dispatch = 0;
   }
 
+  if ($st->{pathogen_host_mode} && !$st->{edit_organism_page_valid} &&
+        $state eq CURATION_IN_PROGRESS && $path !~ m:(/ws/|/gene_upload/):) {
+    $c->detach('edit_genes');
+  }
+
   if ($state eq APPROVAL_IN_PROGRESS) {
     if ($c->user_exists() && $c->user()->role()->name() eq 'admin') {
       # fall through, use dispatch table
       my $unused_genotype_count = _unused_genotype_count($c);
 
-      if ($unused_genotype_count > 0) {
+      # front page only:
+      if ($unused_genotype_count > 0 && $root_path eq $path) {
         if ($st->{message}) {
           if (!ref $st->{message}) {
             $st->{message} = [$st->{message}];
@@ -264,17 +298,31 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
     }
   }
 
+  if ($state ne SESSION_CREATED && $state ne SESSION_ACCEPTED &&
+      $path =~ m|/view_genes_and_strains(?:/(?:ro)?)?$|) {
+    if ($st->{pathogen_host_mode}) {
+      $c->detach('view_genes_and_strains');
+    } else {
+      if ($state eq NEEDS_APPROVAL || $state eq APPROVAL_IN_PROGRESS ||
+          $state eq APPROVED || $state eq EXPORTED) {
+        $c->detach('finished_publication');
+      } else {
+        $c->detach('front');
+      }
+    }
+  }
+
   if ($state eq SESSION_ACCEPTED &&
-      $path =~ m:/(gene_upload|edit_genes|genotype_manage|confirm_genes|finish_form):) {
+      $path =~ m:/(gene_upload|edit_genes|genotype_manage|metagenotype_manage|confirm_genes|finish_form|ws):) {
     $use_dispatch = 0;
   }
 
   if (($state eq NEEDS_APPROVAL || $state eq APPROVED) &&
-      $path =~ m:/(ro|finish_form|reactivate_session|begin_approval|restart_approval|annotation/zipexport|ws/\w+/list):) {
+      $path =~ m:/(ro|finish_form|reactivate_session|set_exported_state|begin_approval|restart_approval|annotation/zipexport|ws/):) {
     $use_dispatch = 0;
   }
 
-  if ($state eq CURATION_PAUSED && $path =~ m:/(ws/.*/list|restart_curation|ro):) {
+  if ($state eq CURATION_PAUSED && $path =~ m:/(ws/settings/(set/paused_message|get_all)|ws/.*/list|restart_curation|ro):) {
     $use_dispatch = 0;
   }
 
@@ -289,7 +337,7 @@ sub top : Chained('/') PathPart('curs') CaptureArgs(1)
     $use_dispatch = 0;
   }
 
-  if ($state eq EXPORTED && $path =~ m|/ro/?$|) {
+  if ($state eq EXPORTED && $path =~ m:/unexport_session|/ro/?$|/ws/:) {
     $use_dispatch = 0;
   }
 
@@ -312,6 +360,101 @@ sub _unused_genotype_count
 
   return $genotype_rs->count();
 }
+
+sub _metagenotype_flags
+{
+  my $config = shift;
+  my $schema = shift;
+
+  my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
+
+  my $rs = $schema->resultset('Organism');
+
+  my $has_host = 0;
+  my $has_pathogen_genes = 0;
+  my $has_host_genes = 0;
+  my $has_host_genotypes = 0;
+  my $has_pathogen_genotypes = 0;
+  my $has_pathogen_host_metagenotypes = 0;
+
+  my $organism_page_valid = 1;
+
+  while (defined (my $org = $rs->next())) {
+    my $organism_details = $organism_lookup->lookup_by_taxonid($org->taxonid());
+
+    if (!defined $organism_details->{pathogen_or_host}) {
+      next;
+    }
+
+    if ($organism_details->{pathogen_or_host} eq 'host') {
+      $has_host = 1;
+      my $org_genotypes_rs = $org->genotypes();
+
+      while (defined (my $genotype = $org_genotypes_rs->next())) {
+        if ($genotype->alleles()->count() > 0) {
+          $has_host_genotypes = 1;
+          last;
+        }
+      }
+
+      if ($org->genes()->count() > 0) {
+        $has_host_genes = 1;
+      }
+    }
+
+    if ($organism_details->{pathogen_or_host} eq 'pathogen') {
+      if ($org->genotypes()->count() > 0) {
+        $has_pathogen_genotypes = 1;
+      }
+      if ($org->genes()->count() > 0) {
+        $has_pathogen_genes = 1;
+      }
+    }
+
+    if ($org->strains()->count() == 0) {
+      $organism_page_valid = 0;
+    }
+  }
+
+  if (!$has_pathogen_genes) {
+    $organism_page_valid = 0;
+  }
+
+  if ($has_pathogen_genes) {
+    my $rs = $schema->resultset('Metagenotype')
+      ->search({}, { prefetch => { first_genotype => 'organism',
+                                   second_genotype => 'organism' } });
+
+    while (defined (my $metagenotype = $rs->next())) {
+      my $first_genotype = $metagenotype->first_genotype();
+      my $first_organism = $first_genotype->organism();
+
+      my $first_org_details =
+        $organism_lookup->lookup_by_taxonid($first_organism->taxonid());
+
+      if (!defined $first_org_details->{pathogen_or_host}) {
+        next;
+      }
+
+      my $second_genotype = $metagenotype->second_genotype();
+      my $second_organism = $second_genotype->organism();
+
+      my $second_org_details =
+        $organism_lookup->lookup_by_taxonid($second_organism->taxonid());
+
+      if (!defined $second_org_details->{pathogen_or_host}) {
+        next;
+      }
+
+      $has_pathogen_host_metagenotypes = 1;
+      last;
+    }
+  }
+
+  return ($has_pathogen_genotypes && $has_host, $has_host_genes,
+          $has_pathogen_genes, $has_host_genotypes, $has_pathogen_genotypes,
+          $has_pathogen_host_metagenotypes, $organism_page_valid);
+};
 
 sub _set_genes_in_session
 {
@@ -447,6 +590,165 @@ sub store_statuses : Chained('top') Args(0) Form
 
 my $gene_list_textarea_name = 'gene_identifiers';
 
+sub _search_highlight
+{
+  my $highlight_terms = shift;
+  my $identifier = shift;
+
+  return '' if !defined $identifier;
+
+  HTML::Mason::Escapes::basic_html_escape(\$identifier);
+
+  if (exists $highlight_terms->{$identifier}) {
+    return '<span class="curs-matched-search-term">' . $identifier . '</span>';
+  } else {
+    return $identifier;
+  }
+}
+
+sub _make_gene_edit_data
+{
+  my ($self, $c, $gene_list) = @_;
+
+  my $st = $c->stash();
+
+  my $schema = $st->{schema};
+
+  my $pathogen_host_mode = $st->{pathogen_host_mode};
+  my $multi_organism_mode = $st->{multi_organism_mode};
+
+  my @highlight_terms = @{$c->flash()->{highlight_terms} || []};
+
+  my %highlight_terms = ();
+  @highlight_terms{@highlight_terms} = @highlight_terms;
+
+  my %all_data = (
+    default_organism => {},
+  );
+
+  if ($pathogen_host_mode) {
+    $all_data{pathogen} = {};
+    $all_data{host} = {};
+  }
+
+  my $strain_lookup = Canto::Track::StrainLookup->new(config => $c->config());
+
+  my @gene_hashes = map {
+    my $gene = $_;
+    my $gene_proxy =
+      Canto::Curs::GeneProxy->new(config => $c->config(), cursdb_gene => $_);
+
+    my $synonyms_string =
+      join (', ', map { _search_highlight(\%highlight_terms, $_) } $gene_proxy->synonyms());
+    my $hash = {
+      'Systematic identifier' => _search_highlight(\%highlight_terms, $gene_proxy->primary_identifier()),
+      Name => _search_highlight(\%highlight_terms, $gene_proxy->primary_name()),
+      Product => $gene_proxy->product(),
+      Synonyms => $synonyms_string,
+      gene_id => $gene_proxy->gene_id(),
+      annotation_count => $gene_proxy->cursdb_gene()
+        ->all_annotations(include_with=>1)->count(),
+      genotype_count => $gene_proxy->cursdb_gene()->genotypes()->count(),
+    };
+
+    my $organism_details = $gene_proxy->organism_details();
+
+    my $taxonid = $organism_details->{taxonid};
+
+    my %org_data;
+    my $org_type = $organism_details->{pathogen_or_host};
+
+    if ($org_type ne 'pathogen' && $org_type ne 'host') {
+      $org_type = 'default_organism';
+    }
+
+    if (exists $all_data{$org_type}->{$taxonid}) {
+      %org_data = %{$all_data{$org_type}->{$taxonid}};
+    } else {
+      %org_data = %$organism_details;
+      delete $org_data{full_name};
+      $org_data{genes} = [];
+      $org_data{selected_strains} = [];
+      $org_data{available_strains} = [$strain_lookup->lookup($taxonid)];
+
+      $all_data{$org_type}->{$taxonid} = \%org_data;
+    }
+
+    push @{$org_data{genes}}, {
+      systematic_identifier => $gene_proxy->primary_identifier(),
+      name => $gene_proxy->primary_name(),
+      product => $gene_proxy->product(),
+      synonyms => [$gene_proxy->synonyms()],
+      gene_id => $gene_proxy->gene_id(),
+      annotation_count => $gene_proxy->cursdb_gene()
+        ->all_annotations(include_with=>1)->count(),
+      genotype_count => $gene_proxy->cursdb_gene()->genotypes()->count(),
+    };
+
+    if ($multi_organism_mode) {
+      $hash->{Organism} = $organism_details->{full_name};
+      $hash->{taxonid} = $organism_details->{taxonid};
+      if ($pathogen_host_mode) {
+        $hash->{pathogen_or_host} = $organism_details->{pathogen_or_host};
+      }
+    }
+    $hash
+  } @$gene_list;
+
+  my @hosts_with_no_genes = ();
+
+  if ($pathogen_host_mode) {
+    use Canto::Track;
+    my $organism_lookup = Canto::Track::get_adaptor($c->config(), 'organism');
+
+    my @curs_host_organism_details =
+      grep {
+        $_->{pathogen_or_host} eq 'host';
+      }
+      map {
+        my $curs_organism = $_;
+
+        my $res = $organism_lookup->lookup_by_taxonid($curs_organism->taxonid());
+
+        $res->{genotype_count} = $curs_organism->genotypes()->count();
+        $res;
+      } $schema->resultset('Organism')->all();
+
+    my @host_organisms_from_genes = ();
+
+    for my $gene ($schema->resultset('Gene')->all()) {
+      my $this_gene_taxonid = $gene->organism()->taxonid();
+      my $organism_details = $organism_lookup->lookup_by_taxonid($this_gene_taxonid);
+      if ($organism_details->{pathogen_or_host} eq 'host') {
+        if (!grep { $_->{taxonid} == $this_gene_taxonid } @host_organisms_from_genes) {
+          push @host_organisms_from_genes, $organism_details;
+        }
+      }
+    }
+
+    my @no_gene_host_organisms =
+      grep {
+        my $host_org = $_;
+        !grep { $_->{taxonid} == $host_org->{taxonid} } @host_organisms_from_genes;
+      } @curs_host_organism_details;
+
+    @hosts_with_no_genes = @no_gene_host_organisms;
+  }
+
+  %all_data = map {
+    ($_, [values %{$all_data{$_}}])
+  } keys %all_data;
+
+  map {
+    $_->{available_strains} = [$strain_lookup->lookup($_->{taxonid})];
+  } @hosts_with_no_genes;
+
+  my $gene_list_data_js = Data::JavaScript::Anon->anon_dump(\%all_data);
+  my $hosts_with_no_genes_js = Data::JavaScript::Anon->anon_dump(\@hosts_with_no_genes);
+
+  return (\@gene_hashes, $gene_list_data_js, $hosts_with_no_genes_js);
+}
+
 # $confirm_genes will be true if we have just uploaded some genes
 sub _edit_genes_helper
 {
@@ -465,6 +767,11 @@ sub _edit_genes_helper
         label_tag => 'formfu-label',
         type => 'Checkbox', default_empty_value => 1
       },
+      {
+        name => 'host-org-select', label => 'host-org-select',
+        label_tag => 'formfu-label',
+        type => 'Checkbox', default_empty_value => 1
+      },
     );
 
 
@@ -472,21 +779,55 @@ sub _edit_genes_helper
 
   $form->process();
 
+  my $pathogen_host_mode = $c->config()->{pathogen_host_mode};
+
   if (defined $c->req->param('continue')) {
     _redirect_and_detach($c);
   }
 
   if (defined $c->req->param('submit')) {
     if ($c->req()->param('submit')) {
-      my @gene_ids = @{$form->param_array('gene-select')};
+      my @gene_ids = grep {
+        length $_ > 0;
+      } @{$form->param_array('gene-select')};
+      my @host_org_taxonids = grep {
+        length $_ > 0;
+      } @{$form->param_array('host-org-select')};
 
-      if (@gene_ids == 0) {
-        $st->{message} = 'No genes selected for deletion';
+      if (@gene_ids == 0 &&
+          (!$pathogen_host_mode || $pathogen_host_mode && @host_org_taxonids == 0)) {
+        if ($pathogen_host_mode) {
+          push @{$st->{message}}, 'No genes or hosts selected for deletion';
+        } else {
+          push @{$st->{message}}, 'No genes selected for deletion';
+        }
       } else {
         my $delete_sub = sub {
+          my %deleted_gene_organisms = ();
           for my $gene_id (@gene_ids) {
             my $gene = $schema->find_with_type('Gene', $gene_id);
+            $deleted_gene_organisms{$gene->organism()->taxonid()} = 1;
             $gene->delete();
+          }
+
+          my $organism_lookup = Canto::Track::get_adaptor($config, 'organism');
+          my $organism_manager =
+            Canto::Curs::OrganismManager->new(config => $c->config(), curs_schema => $schema);
+
+          for my $taxonid (keys %deleted_gene_organisms) {
+            my $organism_details = $organism_lookup->lookup_by_taxonid($taxonid);
+            if ($organism_details->{pathogen_or_host} &&
+                $organism_details->{pathogen_or_host} eq 'pathogen') {
+              my $organism = $schema->resultset("Organism")->find({ taxonid => $taxonid });
+              if ($organism->genes()->count() == 0 &&
+                  $organism->genotypes()->count() == 0) {
+                $organism_manager->delete_organism_by_taxonid($taxonid);
+              }
+            }
+          }
+
+          for my $host_org_taxonid (@host_org_taxonids) {
+            $organism_manager->delete_organism_by_taxonid($host_org_taxonid);
           }
         };
         $schema->txn_do($delete_sub);
@@ -495,28 +836,51 @@ sub _edit_genes_helper
 
         if ($self->get_ordered_gene_rs($schema)->count() == 0) {
           $self->unset_metadata($schema, Canto::Curs::State::CURATION_IN_PROGRESS_TIMESTAMP_KEY());
-          $c->flash()->{message} = 'All genes removed from the list';
+          push @{$c->flash()->{message}}, 'All genes removed from the list';
           _redirect_and_detach($c, 'gene_upload');
         } else {
-          my $plu = scalar(@gene_ids) > 1 ? 's' : '';
-          $st->{message} = 'Removed ' . scalar(@gene_ids) . " gene$plu from list";
+          my $plu = scalar(@gene_ids) != 1 ? 's' : '';
+          my $message = 'Removed ' . scalar(@gene_ids) . " gene$plu from list";
+          if (@host_org_taxonids) {
+            $message .= ', removed ' . scalar(@host_org_taxonids) . ' host' .
+              (scalar(@host_org_taxonids) != 1 ? 's' : '');
+          }
+
+          push @{$st->{message}}, $message;
         }
       }
     }
   }
 
+  $st->{confirm_genes} = $confirm_genes;
+
   if ($confirm_genes) {
-    $st->{title} = 'Confirm gene list for ' . $st->{pub}->uniquename();
+    $st->{title} = 'Confirm gene ';
+    if ($pathogen_host_mode) {
+      $st->{title} .= 'and host organism ';
+    }
+    $st->{title} .= 'list for ' . $st->{pub}->uniquename();
   } else {
-    $st->{title} = 'Gene list for ' . $st->{pub}->uniquename();
+    $st->{title} = 'Gene ';
+    if ($pathogen_host_mode) {
+      $st->{title} .= 'and host organism ';
+    }
+    $st->{title} .= 'list for ' . $st->{pub}->uniquename();
   }
   $st->{show_title} = 0;
   $st->{template} = 'curs/gene_list_edit.mhtml';
 
   $st->{form} = $form;
 
-  $st->{gene_list} =
+  my $gene_list =
     [Canto::Controller::Curs->get_ordered_gene_rs($schema, 'primary_identifier')->all()];
+
+  my ($gene_hashes, $gene_list_data_js, $hosts_with_no_genes_js) =
+    $self->_make_gene_edit_data($c, $gene_list);
+
+  $st->{gene_hashes} = $gene_hashes;
+  $st->{gene_list_data_js} = $gene_list_data_js;
+  $st->{hosts_with_no_genes_js} = $hosts_with_no_genes_js;
 }
 
 sub edit_genes : Chained('top') Args(0) Form
@@ -525,6 +889,29 @@ sub edit_genes : Chained('top') Args(0) Form
   my ($c) = @_;
 
   $self->_edit_genes_helper(@_, 0);
+}
+
+sub view_genes_and_strains : Chained('top')
+{
+  my $self = shift;
+  my ($c) = @_;
+
+  my $st = $c->stash();
+
+  my $pathogen_host_mode = $c->config()->{pathogen_host_mode};
+
+  my $gene_list =
+    [Canto::Controller::Curs->get_ordered_gene_rs($st->{schema}, 'primary_identifier')->all()];
+
+  my ($gene_hashes, $gene_list_data_js, $hosts_with_no_genes_js) =
+    $self->_make_gene_edit_data($c, $gene_list);
+
+  $st->{gene_hashes} = $gene_hashes;
+  $st->{gene_list_data_js} = $gene_list_data_js;
+  $st->{hosts_with_no_genes_js} = $hosts_with_no_genes_js;
+
+  $st->{title} = 'Genes, organisms and strains from this session';
+  $st->{template} = 'curs/view_genes_and_strains.mhtml';
 }
 
 sub confirm_genes : Chained('top') Args(0) Form
@@ -563,12 +950,11 @@ sub gene_upload : Chained('top') Args(0) Form
 
   my @no_genes_elements = ();
   my @no_genes_reasons =
-    ( [ '', 'Please choose a reason ...' ],
+    ( [ '', 'Choose a reason...' ],
       map { [ $_, $_ ] } @{$c->config()->{curs_config}->{no_genes_reasons}} );
-  my @required_when = ();
 
   if ($st->{gene_count} > 0) {
-    push @submit_buttons, "Back";
+    push @submit_buttons, "Cancel";
   } else {
     @no_genes_elements = (
       {
@@ -593,7 +979,6 @@ sub gene_upload : Chained('top') Args(0) Form
                         placeholder => 'Please specify' },
       },
     );
-    @required_when = (when => { field => 'no-genes', not => 1, value => 1 });
   }
 
   my $not_valid_message = "Please enter some gene identifiers or choose a " .
@@ -604,27 +989,49 @@ sub gene_upload : Chained('top') Args(0) Form
         attributes => { 'ng-model' => 'data.geneIdentifiers',
                         'ng-disabled' => 'data.noAnnotation',
                         placeholder => "{{ data.noAnnotation ? 'No genes in this publication ' : '' }}" },
-        constraints => [ { type => 'Length',  min => 1 },
-                         { type => 'Required', @required_when },
-                       ],
-      },
-      { name => 'return_path_input', type => 'Hidden',
-        value => $return_path // '' },
-      (map {
-          my $ret = {
-            name => $_, type => 'Submit', value => $_,
-            attributes => {
-              class => 'btn btn-primary curs-finish-button button',
-              title => "{{ isValid() ? '' : '$not_valid_message' }}",
-            },
-          };
-          if ($_ eq 'Continue') {
-            $ret->{attributes}->{'ng-disabled'} = '!isValid()';
-          }
-          $ret;
-        } @submit_buttons),
-      @no_genes_elements,
+      }
     );
+
+  if ($c->config()->{pathogen_host_mode}) {
+    my $pub_uniquename = $st->{pub}->uniquename();
+
+    push @all_elements,
+      {
+        type => 'Block', tag => 'div',
+        content => "Add host organisms (where the paper has a host with no specified genes):",
+      },
+      {
+        type => 'Block', tag => 'organism-picker',
+        content => '',
+        attributes => {
+          'disabled' => 'data.noAnnotation',
+          'selected-organisms' => "data.selectedHostOrganisms",
+        }
+      };
+  }
+
+  push @all_elements,
+    { name => 'return_path_input', type => 'Hidden',
+      value => $return_path // '',
+    },
+      (map {
+        my $ret = {
+          name => $_, type => 'Submit', value => $_,
+          attributes => {
+            class => 'btn btn-primary curs-finish-button button',
+            title => "{{ isValid() ? '' : '$not_valid_message' }}",
+          },
+        };
+        if ($_ eq 'Continue') {
+          $ret->{attributes}->{'ng-disabled'} = '!isValid()';
+        }
+        if ($_ eq 'Cancel') {
+          $ret->{attributes}->{'class'} =~ s/btn-primary/btn-warning/;
+        }
+        $ret;
+      } @submit_buttons),
+        @no_genes_elements;
+
 
   $form->elements([@all_elements]);
 
@@ -633,7 +1040,7 @@ sub gene_upload : Chained('top') Args(0) Form
   $st->{form} = $form;
 
   if ($form->submitted()) {
-    if (defined $c->req->param('Back')) {
+    if (defined $c->req->param('Cancel')) {
       my $return_path = $form->param_value('return_path_input');
 
       if (defined $return_path && length $return_path > 0) {
@@ -649,7 +1056,7 @@ sub gene_upload : Chained('top') Args(0) Form
   if ($form->submitted_and_valid()) {
     if ($form->param_value('no-genes')) {
       my $no_genes_reason =
-        $form->param_value('no-genes-reason') // $form->param_value('no-genes-other');
+        $form->param_value('no-genes-other') || $form->param_value('no-genes-reason');
 
       $no_genes_reason =~ s/^\s+//;
       $no_genes_reason =~ s/\s+$//;
@@ -657,13 +1064,14 @@ sub gene_upload : Chained('top') Args(0) Form
         $self->set_metadata($schema, Canto::Curs::State::NO_ANNOTATION_REASON_KEY(),
                             $no_genes_reason);
       } else {
-        $st->{message} = $not_valid_message;
-        return;
+        push @{$st->{message}}, $not_valid_message;
       }
 
-      $c->flash()->{message} = "Annotation complete";
+      push @{$c->flash()->{message}}, "Annotation complete";
 
       _redirect_and_detach($c, 'finish_form');
+
+      return;
     }
 
     my $search_terms_text = $form->param_value($gene_list_textarea_name);
@@ -675,7 +1083,30 @@ sub gene_upload : Chained('top') Args(0) Form
       Canto::Curs::GeneManager->new(config => $c->config(),
                                     curs_schema => $schema);
 
-    my @res_list = $gene_manager->find_and_create_genes(\@search_terms);
+    my @res_list = ();
+
+    my @host_taxon_ids = ();
+
+    if ($c->config()->{pathogen_host_mode}) {
+      my $taxon_ids_text = $c->req->param('host_organism_taxon_ids');
+
+      # will be undefined if the form is submitted before the organism picker
+      # has finished initialising (ie. the spinner is still spinning)
+      if (defined $taxon_ids_text) {
+        @host_taxon_ids = grep { length $_ > 0 && /^\d+$/ } split /[\s,]+/, $taxon_ids_text;
+
+        my $organism_manager =
+          Canto::Curs::OrganismManager->new(config => $c->config(), curs_schema => $schema);
+
+        map {
+          $organism_manager->add_organism_by_taxonid($_);
+        } @host_taxon_ids
+      }
+    }
+
+    if (!@host_taxon_ids || @search_terms) {
+      @res_list = $gene_manager->find_and_create_genes(\@search_terms);
+    }
 
     if (@res_list > 1) {
       # there was a problem
@@ -741,9 +1172,14 @@ sub gene_upload : Chained('top') Args(0) Form
       my $matched_count = scalar(keys %$result);
 
       my $message = "Added $matched_count gene";
-      $message .= 's' if ($matched_count > 1);
+      $message .= 's' if ($matched_count != 1);
 
-      $c->flash()->{message} = $message;
+      if (@host_taxon_ids > 0) {
+        $message .= ', added ' . scalar(@host_taxon_ids) .
+          ' host organism' . (@host_taxon_ids != 1 ? 's' : '');
+      }
+
+      push @{$c->flash()->{message}}, $message;
 
       if (!defined $self->get_metadata($schema, Canto::Curs::State::CURATION_IN_PROGRESS_TIMESTAMP_KEY())) {
         $self->set_metadata($schema, Canto::Curs::State::CURATION_IN_PROGRESS_TIMESTAMP_KEY(),
@@ -766,7 +1202,43 @@ sub gene_upload : Chained('top') Args(0) Form
   }
 }
 
+sub _genotype_manage_helper
+{
+  my ($self, $c, $flag, $genotype_type) = @_;
+
+  my $st = $c->stash();
+
+  if (defined $flag && $flag eq 'ro') {
+    $st->{read_only_curs} = 1;
+  }
+
+  $st->{title} = 'Genotypes for: ' . $st->{pub}->uniquename();
+  $st->{genotype_switch_select} = $genotype_type;
+  $st->{template} = 'curs/genotype_switch.mhtml';
+}
+
 sub genotype_manage : Chained('top')
+{
+  my ($self, $c, $flag) = @_;
+
+  $self->_genotype_manage_helper($c, $flag, 'genotype');
+}
+
+sub pathogen_genotype_manage : Chained('top')
+{
+  my ($self, $c, $flag) = @_;
+
+  $self->_genotype_manage_helper($c, $flag, 'pathogen-genotype');
+}
+
+sub host_genotype_manage : Chained('top')
+{
+  my ($self, $c, $flag) = @_;
+
+  $self->_genotype_manage_helper($c, $flag, 'host-genotype');
+}
+
+sub metagenotype_manage : Chained('top')
 {
   my ($self, $c, $flag) = @_;
 
@@ -776,8 +1248,9 @@ sub genotype_manage : Chained('top')
     $st->{read_only_curs} = 1;
   }
 
-  $st->{title} = 'Genotypes for: ' . $st->{pub}->uniquename();
-  $st->{template} = 'curs/genotype_manage.mhtml';
+  $st->{title} = 'Metagenotypes for: ' . $st->{pub}->uniquename();
+  $st->{genotype_switch_select} = 'metagenotype';
+  $st->{template} = 'curs/genotype_switch.mhtml';
 }
 
 sub _delete_annotation : Private
@@ -797,7 +1270,7 @@ sub _delete_annotation : Private
     $annotation->delete();
   }
 
-  $c->flash()->{message} = "Annotation deleted";
+  push @{$c->flash()->{message}}, "Annotation deleted";
 }
 
 sub annotation_delete : Chained('annotation') PathPart('delete')
@@ -904,7 +1377,15 @@ sub _create_annotation
 
     $annotation->set_genes(@genes);
   } else {
-    $annotation->set_genotypes(@$features);
+    if ($feature_type eq 'genotype') {
+      $annotation->set_genotypes(@$features);
+    } else {
+      if ($feature_type eq 'metagenotype') {
+        $annotation->set_metagenotypes(@$features);
+      } else {
+        die "unknown feature type: ", $feature_type;
+      }
+    }
   }
 
   $self->set_annotation_curator($annotation);
@@ -995,17 +1476,26 @@ sub start_annotation : Chained('annotate') PathPart('start') Args(1)
   my @features = @{$st->{features}};
 
   my $annotation_config = $config->{annotation_types}->{$annotation_type_name};
+
+  if (!defined $annotation_config) {
+    die "no configuration for $annotation_type_name";
+  }
+
   $st->{annotation_type_config} = $annotation_config;
   $st->{annotation_type_name} = $annotation_type_name;
 
   my $annotation_display_name = $annotation_config->{display_name};
 
   my $display_names = join ',', map {
-    $_->display_name();
+    if ($annotation_config->{feature_type} eq 'gene') {
+      $_->display_name();
+    } else {
+      $_->display_name($config);
+    }
   } @features;
 
-  $st->{title} = "Curating $annotation_display_name for $display_names\n";
-  $st->{show_title} = 0;
+  $st->{title} = "Create annotation";
+  $st->{show_title} = 1;
 
   my %type_dispatch = (
     ontology => \&annotation_ontology_edit,
@@ -1186,6 +1676,10 @@ sub annotation_set_term : Chained('annotate') PathPart('set_term') Args(1)
     $annotation_data{submitter_comment} = $body_data->{submitter_comment};
   }
 
+  if ($body_data->{figure}) {
+    $annotation_data{figure} = $body_data->{figure};
+  }
+
   my $annotation =
     $self->_create_annotation($c, $annotation_type_name,
                                   $feature_type, [$feature], \%annotation_data);
@@ -1292,7 +1786,7 @@ sub _get_all_alleles
     });
 
   while (defined (my $allele = $allele_rs->next())) {
-    my $allele_display_name = $allele->display_name();
+    my $allele_display_name = $allele->display_name($config);
     $results{$allele_display_name} = {
       name => $allele->name(),
       description => $allele->description(),
@@ -1400,10 +1894,26 @@ sub feature_view : Chained('feature') PathPart('view')
       $st->{feature} = $genotype;
       $st->{features} = [$genotype];
 
-      my $display_name = $st->{feature}->display_name();
+      my $display_name = $st->{feature}->display_name($config);
       $st->{title} = "Genotype: $display_name";
     } else {
-      die "no such feature type: $feature_type\n";
+      if ($feature_type eq 'metagenotype') {
+        my $metagenotype_id = $ids[0];
+
+        my $metagenotype = $schema->find_with_type('Metagenotype', $metagenotype_id);
+
+        $st->{metagenotype} = $metagenotype;
+        $st->{annotation_count} = $metagenotype->annotations()->count();
+
+        $st->{feature} = $metagenotype;
+        $st->{features} = [$metagenotype];
+
+        my $display_name = $st->{feature}->display_name($config);
+        $st->{title} = "Metagenotype details";
+
+      } else {
+        die "no such feature type: $feature_type\n";
+      }
     }
   }
 
@@ -1425,56 +1935,71 @@ sub _feature_edit_helper
   if ($feature_type eq 'genotype') {
     my $genotype = $schema->find_with_type('Genotype', $genotype_id);
 
-    if ($c->req()->method() eq 'POST') {
-      # store the changes
-      my $body_data = _decode_json_content($c);
+    # store the changes
+    my $body_data = _decode_json_content($c);
 
-      my @alleles_data = @{$body_data->{alleles}};
-      my $genotype_name = $body_data->{genotype_name};
-      my $genotype_background = $body_data->{genotype_background};
+    my @alleles_data = @{$body_data->{alleles}};
+    my $genotype_name = $body_data->{genotype_name};
+    my $genotype_background = $body_data->{genotype_background};
+    my $genotype_comment = $body_data->{genotype_comment};
+    my $genotype_taxonid = $body_data->{taxonid};
+    my $strain_name = $body_data->{strain_name} || undef;
 
-      if (defined $genotype_name && length $genotype_name > 0) {
-        my $trimmed_name = $genotype_name =~ s/^\s*(.*?)\s*$/$1/r;
-        my $existing_genotype =
-          $schema->resultset('Genotype')->find({ name => $genotype_name }) //
-          $schema->resultset('Genotype')->find({ name => $trimmed_name });
+    if (defined $genotype_name && length $genotype_name > 0) {
+      my $trimmed_name = $genotype_name =~ s/^\s*(.*?)\s*$/$1/r;
+      my $existing_genotype =
+        $schema->resultset('Genotype')->find({ name => $genotype_name }) //
+        $schema->resultset('Genotype')->find({ name => $trimmed_name });
 
-        if ($existing_genotype && $existing_genotype->genotype_id() != $genotype_id) {
-          $c->stash->{json_data} = {
-            status => "error",
-            message => "Storing changes to genotype failed: a genotype with " .
-              "that name already exists",
-          };
-          $c->forward('View::JSON');
-          return;
-        }
+      if ($existing_genotype && $existing_genotype->genotype_id() != $genotype_id) {
+        $c->stash->{json_data} = {
+          status => "error",
+          message => "Storing changes failed: a genotype with " .
+            "that name already exists",
+        };
+        $c->forward('View::JSON');
+        return;
       }
+    }
 
-      try {
-        my $guard = $schema->txn_scope_guard();
+    try {
+      my $allele_manager =
+        Canto::Curs::AlleleManager->new(config => $c->config(),
+                                        curs_schema => $schema);
 
-        my $allele_manager =
-          Canto::Curs::AlleleManager->new(config => $c->config(),
+      my $genotype_manager =
+        Canto::Curs::GenotypeManager->new(config => $c->config(),
                                           curs_schema => $schema);
 
-        my @alleles = ();
+      die "no genotype taxonid" unless $genotype_taxonid;
 
-        my $curs_key = $st->{curs_key};
+      my $existing_genotype =
+        $genotype_manager->find_genotype($genotype_taxonid, $genotype_background,
+                                         $strain_name, \@alleles_data);
 
-        for my $allele_data (@alleles_data) {
-          my $allele = $allele_manager->allele_from_json($allele_data, $curs_key,
-                                                         \@alleles);
-
-          push @alleles, $allele;
+      if ($existing_genotype &&
+            $existing_genotype->genotype_id() != $genotype->genotype_id()) {
+        my $alleles_string = "allele";
+        if (@alleles_data > 1) {
+          $alleles_string = "alleles";
         }
 
-        my $genotype_manager =
-          Canto::Curs::GenotypeManager->new(config => $c->config(),
-                                            curs_schema => $schema);
+        $c->stash->{json_data} = {
+          status => "existing",
+          genotype_display_name => $existing_genotype->display_name($c->config(), $strain_name),
+          genotype_id => $existing_genotype->genotype_id(),
+          taxonid => $existing_genotype->organism()->taxonid(),
+          comment => $existing_genotype->comment(),
+          strain_name => $strain_name,
+        };
 
-        $genotype_manager->store_genotype_changes($curs_key, $genotype,
+      } else {
+        my $guard = $schema->txn_scope_guard();
+
+        $genotype_manager->store_genotype_changes($genotype,
                                                   $genotype_name, $genotype_background,
-                                                  \@alleles);
+                                                  $genotype_taxonid, \@alleles_data,
+                                                  $strain_name, $genotype_comment);
 
         $guard->commit();
 
@@ -1482,37 +2007,17 @@ sub _feature_edit_helper
           status => "success",
           location => $st->{curs_root_uri} . "/genotype_manage#/select/" . $genotype->genotype_id(),
         };
-      } catch {
-        $c->stash->{json_data} = {
-          status => "error",
-          message => "Storing changes to genotype failed: internal error - " .
-            "please report this to the Canto developers",
-        };
-        warn $_;
+      }
+    } catch {
+      $c->stash->{json_data} = {
+        status => "error",
+        message => "Storing changes to genotype failed: internal error - " .
+          "please report this to the Canto developers",
       };
+      warn $_;
+    };
 
-      $c->forward('View::JSON');
-    } else {
-      $st->{genotype_id} = $genotype->id();
-
-      _set_allele_select_stash($c);
-
-      $st->{feature} = $genotype;
-      $st->{features} = [$genotype];
-
-      if ($edit_or_duplicate eq 'edit') {
-        $st->{annotation_count} = $genotype->annotations()->count();
-      }
-
-      my $display_name = $st->{feature}->display_name();
-
-      if ($edit_or_duplicate eq 'edit') {
-        $st->{title} = "Editing genotype: $display_name";
-      } else {
-        $st->{title} = "Adding a genotype";
-      }
-      $st->{template} = "curs/${feature_type}_edit.mhtml";
-    }
+    $c->forward('View::JSON');
   } else {
     die "can't edit feature type: $feature_type\n";
   }
@@ -1551,9 +2056,31 @@ sub _decode_json_content
   return decode_json($json_content);
 }
 
-sub genotype_store : Chained('feature') PathPart('store')
+sub feature_store : Chained('feature') PathPart('store')
 {
+  my ($self, $c) = @_;
 
+  my $st = $c->stash();
+  my $feature_type = $st->{feature_type};
+
+  if ($feature_type eq 'genotype') {
+    $self->_genotype_store($c);
+  } else {
+    if ($feature_type eq 'metagenotype') {
+      $self->_metagenotype_store($c);
+    } else {
+      $c->stash->{json_data} = {
+        status => "error",
+        message => "can't store feature of type: $feature_type",
+      };
+      warn $_;
+      $c->forward('View::JSON');
+    };
+  }
+}
+
+sub _genotype_store
+{
   my ($self, $c) = @_;
   my $st = $c->stash();
   my $schema = $st->{schema};
@@ -1565,8 +2092,20 @@ sub genotype_store : Chained('feature') PathPart('store')
   my @alleles_data = @{$body_data->{alleles}};
   my $genotype_name = $body_data->{genotype_name};
   my $genotype_background = $body_data->{genotype_background};
+  my $genotype_comment = $body_data->{genotype_comment};
+  my $genotype_taxonid = $body_data->{taxonid};
 
-  my @alleles = ();
+  my $instance_organism = $config->{instance_organism};
+
+  if (defined $instance_organism) {
+    # If this Canto is for a single organism then all genotype will be from
+    # that organism.  This handles the case where a foreign gene is used in
+    # a genotype.  eg. Gal4
+    # See: https://github.com/pombase/canto/issues/2317
+    $genotype_taxonid = $instance_organism->{taxonid};
+  }
+
+  my $strain_name = $body_data->{strain_name} || undef;
 
   if ($genotype_name && $schema->resultset('Genotype')->find( { name => $genotype_name } )) {
     $c->stash->{json_data} = {
@@ -1578,59 +2117,63 @@ sub genotype_store : Chained('feature') PathPart('store')
     try {
       my $curs_key = $st->{curs_key};
 
-      my $allele_manager =
-        Canto::Curs::AlleleManager->new(config => $c->config(),
-                                        curs_schema => $schema);
-
-      for my $allele_data (@alleles_data) {
-        my $allele = $allele_manager->allele_from_json($allele_data, $curs_key,
-                                                               \@alleles);
-
-        push @alleles, $allele;
-      }
+      die "no genotype taxonid" unless $genotype_taxonid;
 
       my $genotype_manager =
         Canto::Curs::GenotypeManager->new(config => $c->config(),
                                           curs_schema => $schema);
 
       my $existing_genotype =
-        $genotype_manager->find_with_bg_and_alleles($genotype_background, \@alleles);
+        $genotype_manager->find_genotype($genotype_taxonid, $genotype_background,
+                                         $strain_name, \@alleles_data);
 
       if ($existing_genotype) {
         my $alleles_string = "allele";
-        if (@alleles > 1) {
+        if (@alleles_data > 1) {
           $alleles_string = "alleles";
         }
+        my $message;
         if (defined $existing_genotype->name()) {
-          $c->flash()->{message} = qq(Using existing genotype with the same $alleles_string: ") .
+          $message = qq(Using existing genotype with the same $alleles_string: ") .
             $existing_genotype->name() . '"'
         } else {
-          $c->flash()->{message} = "Using existing genotype with the same $alleles_string";
+          $message = "Using existing genotype with the same $alleles_string";
         }
 
         if ($genotype_background) {
-          $c->flash()->{message} .= " and background";
+          $message .= " and background";
         }
+
+        push @{$c->flash()->{message}}, $message;
 
         $c->stash->{json_data} = {
           status => "existing",
-          genotype_display_name => $existing_genotype->display_name(),
+          genotype_display_name => $existing_genotype->display_name($config, $strain_name),
           genotype_id => $existing_genotype->genotype_id(),
+          taxonid => $existing_genotype->organism()->taxonid(),
+          comment => $existing_genotype->comment(),
+          strain_name => $strain_name,
         };
       } else {
         my $guard = $schema->txn_scope_guard();
 
-        my $genotype = $genotype_manager->make_genotype($curs_key,
-                                                        $genotype_name, $genotype_background, \@alleles);
+        my $genotype =
+          $genotype_manager->make_genotype($genotype_name, $genotype_background,
+                                           \@alleles_data, $genotype_taxonid, undef,
+                                           $strain_name, $genotype_comment);
 
         $guard->commit();
 
-        $c->flash()->{message} = 'Created new genotype';
+        my $genotype_display_name = $genotype->display_name($config);
+
+        push @{$c->flash()->{message}}, 'Created new genotype: ' . $genotype_display_name;
 
         $c->stash->{json_data} = {
           status => "success",
-          genotype_display_name => $genotype->display_name(),
+          genotype_display_name => $genotype_display_name,
           genotype_id => $genotype->genotype_id(),
+          taxonid => $genotype->organism()->taxonid(),
+          strain_name => $strain_name,
         };
       }
     } catch {
@@ -1639,6 +2182,7 @@ sub genotype_store : Chained('feature') PathPart('store')
         message => "Storing new genotype failed: internal error - " .
           "please report this to the Canto developers",
       };
+
       warn $_;
     };
   }
@@ -1646,6 +2190,97 @@ sub genotype_store : Chained('feature') PathPart('store')
   $c->forward('View::JSON');
 }
 
+sub _metagenotype_store
+{
+  my ($self, $c) = @_;
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $config = $c->config();
+
+  my $body_data = _decode_json_content($c);
+
+  my $pathogen_genotype_id = $body_data->{pathogen_genotype_id};
+  my $host_genotype_id = $body_data->{host_genotype_id};
+  my $host_taxonid = $body_data->{host_taxon_id};
+  my $host_strain_name = $body_data->{host_strain_name};
+
+  if (!$host_genotype_id && !$host_taxonid) {
+    $c->stash->{json_data} = {
+      status => "error",
+      message => "Storing new metagenotype failed: internal error - " .
+        "metagenotype call must have 'host_genotype_id' or 'host_taxonid' param",
+    };
+
+    $c->forward('View::JSON');
+
+    return;
+  }
+
+  if ($host_genotype_id && $host_taxonid) {
+    $c->stash->{json_data} = {
+      status => "error",
+      message => "Storing new metagenotype failed: internal error - " .
+        "metagenotype call has both 'host_genotype_id' and 'host_taxonid' params",
+    };
+
+    $c->forward('View::JSON');
+
+    return;
+  }
+
+  my @alleles = ();
+
+  try {
+    my $pathogen_genotype = $schema->find_with_type('Genotype', $pathogen_genotype_id);
+
+    my $genotype_manager =
+      Canto::Curs::GenotypeManager->new(config => $c->config(), curs_schema => $schema);
+
+    my $host_genotype;
+
+    if ($host_genotype_id) {
+      $host_genotype = $schema->find_with_type('Genotype', $host_genotype_id);
+    } else {
+      $host_genotype = $genotype_manager->get_wildtype_genotype($host_taxonid, $host_strain_name);
+    }
+
+    my $existing_metagenotype =
+      $genotype_manager->find_metagenotype(pathogen_genotype => $pathogen_genotype,
+                                           host_genotype => $host_genotype);
+
+    if ($existing_metagenotype) {
+        $c->stash->{json_data} = {
+          status => "existing",
+          metagenotype_display_name => $existing_metagenotype->display_name($config),
+          metagenotype_id => $existing_metagenotype->metagenotype_id(),
+        };
+    } else {
+      my $guard = $schema->txn_scope_guard();
+
+      my $metagenotype =
+        $genotype_manager->make_metagenotype(pathogen_genotype => $pathogen_genotype,
+                                             host_genotype => $host_genotype);
+
+      $guard->commit();
+
+      $c->stash->{json_data} = {
+        status => "success",
+        metagenotype_display_name => $metagenotype->display_name($config),
+        metagenotype_id => $metagenotype->metagenotype_id(),
+      };
+    }
+  } catch {
+    $c->stash->{json_data} = {
+      status => "error",
+      message => "Storing new metagenotype failed: internal error - " .
+        "please report this to the Canto developers",
+    };
+    warn $_;
+  };
+
+  $c->forward('View::JSON');
+}
 
 sub annotation_export : Chained('top') PathPart('annotation_export') Args(1)
 {
@@ -1717,8 +2352,7 @@ sub finish_session : Chained('top') Arg(0)
     my $other_reason = $form->param_value('otherReason');
 
     if ($no_annotation eq 'on' && !defined $reason) {
-      $c->stash()->{message} =
-        'No reason given for having no annotation';
+      push @{$c->stash()->{message}}, 'No reason given for having no annotation';
       _redirect_and_detach($c);
     } else {
       if (lc $reason eq 'other' && defined $other_reason) {
@@ -1756,7 +2390,13 @@ sub finish_form : Chained('top') Args(0)
 
   my @all_elements = (
       {
-        name => $finish_textarea, type => 'Textarea', cols => 80, rows => 20,
+        name => $finish_textarea,
+        type => 'Textarea',
+        cols => 80,
+        rows => 3,
+        attributes => {
+          class => 'curs-final-comments-field'
+        },
         default => $self->get_metadata($schema, MESSAGE_FOR_CURATORS_KEY) // '',
       },
       map {
@@ -1972,6 +2612,8 @@ sub _assign_session :Private
     );
 
   if (!$reassign) {
+    my $orcid_help_uri = $c->uri_for('/docs/orcid_canto');
+
     push @all_elements,
       {
         type => 'Block', tag => 'p',
@@ -1983,6 +2625,11 @@ sub _assign_session :Private
         label_tag => 'formfu-label',
         type => 'Text', size => 40,
         default => $default_submitter_orcid
+      },
+      {
+        type => 'Block', tag => 'p',
+        attributes => { style => 'margin: 5px', },
+        content_xml => '<a href="' . $orcid_help_uri . '">Why we collect ORCIDs</a>',
       };
   }
 
@@ -2003,7 +2650,7 @@ sub _assign_session :Private
     if (defined $reassigner_name_value) {
       $reassigner_name_value = trim($reassigner_name_value);
       if ($reassigner_name_value =~ /\@/) {
-        $c->stash()->{message} =
+        push @{$c->stash()->{message}},
           "Names can't contain the '\@' character: $reassigner_name_value - please " .
             "try again";
         return;
@@ -2023,7 +2670,7 @@ sub _assign_session :Private
     my $submitter_orcid = trim($form->param_value('submitter_orcid'));
 
     if ($submitter_name =~ /\@/) {
-      $c->stash()->{message} =
+      push @{$c->stash()->{message}},
         "Names can't contain the '\@' character: $submitter_name - please " .
         "try again";
       return;
@@ -2072,7 +2719,7 @@ sub _assign_session :Private
                                          recipient_email => $reassigner_email,
                                          reassigner_email => $reassigner_email } );
 
-      $c->flash()->{message} = "Session has been reassigned to: $submitter_email";
+      push @{$c->flash()->{message}}, "Session has been reassigned to: $submitter_email";
 
       _redirect_to_top_and_detach($c);
     } else {
@@ -2116,7 +2763,9 @@ sub restart_curation : Chained('top') Args(0)
 
   $self->state()->set_state($schema, CURATION_IN_PROGRESS);
 
-  $c->flash()->{message} = 'Session has been restarted';
+  $self->unset_metadata($schema, 'paused_message');
+
+  push @{$c->flash()->{message}}, 'Session has been restarted';
 
   _redirect_and_detach($c);
 }
@@ -2145,7 +2794,51 @@ sub reactivate_session : Chained('top') Args(0)
                       Canto::Util::get_current_datetime());
   $self->state()->store_statuses($c->stash()->{schema});
 
-  $c->flash()->{message} = 'Session has been reactivated';
+  push @{$c->flash()->{message}}, 'Session has been reactivated';
+
+  _redirect_and_detach($c);
+}
+
+sub unexport_session : Chained('top') Args(0)
+{
+  my ($self, $c) = @_;
+
+  my $state = $c->stash()->{state};
+
+  if ($state ne EXPORTED) {
+    die qq(can't un-export a session that isn't in the "EXPORTED" state);
+  }
+
+  my $schema = $c->stash()->{schema};
+
+  my $current_user = $c->user();
+  $self->state()->set_state($schema, APPROVED,
+                            { force => $state, current_user => $current_user});
+
+  $self->state()->store_statuses($c->stash()->{schema});
+
+  push @{$c->flash()->{message}}, 'Session has been un-exported';
+
+  _redirect_and_detach($c);
+}
+
+sub set_exported_state : Chained('top') Args(0)
+{
+  my ($self, $c) = @_;
+
+  my $state = $c->stash()->{state};
+
+  if ($state ne APPROVED) {
+    die qq(can't un-export a session that isn't in the "EXPORTED" state);
+  }
+
+  my $schema = $c->stash()->{schema};
+
+  my $current_user = $c->user();
+  $self->state()->set_state($schema, EXPORTED,
+                            { force => $state, current_user => $current_user});
+
+  push @{$c->flash()->{message}}, 'Session has been un-exported';
 
   _redirect_and_detach($c);
 }
@@ -2236,6 +2929,17 @@ sub _send_email_from_template
 
   my ($subject, $body, $from) = $email_util->make_email($type, %args);
 
+  if (!$from || $from =~ /CONFIGURE_ME_IN_CANTO_DEPLOY/i) {
+    warn "config->{email}->{from_address} not configured - no email sent for:\n" .
+      "  $subject\n";
+
+    return;
+  }
+
+  if ($from eq "DO_NOT_EMAIL") {
+    return;
+  }
+
   $self->_send_mail($c, subject => $subject, body => $body, to => $recipient_email,
                     from => $from);
 }
@@ -2320,7 +3024,7 @@ sub complete_approval : Chained('top') Args(0)
                               {
                                 current_user => $current_user,
                               });
-    $c->flash()->{message} = 'Session approved';
+    push @{$c->flash()->{message}}, 'Session approved';
   }
 
   _redirect_and_detach($c);
@@ -2518,7 +3222,77 @@ sub ws_annotation_delete : Chained('top') PathPart('ws/annotation/delete')
   $c->forward('View::JSON');
 }
 
+sub ws_allele_set_note : Chained('top') PathPart('ws/allele_note/set')
+{
+  my ($self, $c, $allele_primary_identifier, $key, $value) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $guard = $schema->txn_scope_guard();
+
+  my $allele_manager =
+    Canto::Curs::AlleleManager->new(config => $c->config(),
+                                    curs_schema => $schema);
+
+  if (!$value) {
+    # it's a POST
+    $value = $c->request()->body_data()->{data};
+  }
+
+  $allele_manager->set_note($allele_primary_identifier, $key, $value);
+
+  $c->stash->{json_data} = {
+    status => 'success',
+  };
+
+  $guard->commit();
+
+  $c->forward('View::JSON');
+}
+
+sub ws_allele_delete_note : Chained('top') PathPart('ws/allele_note/delete')
+{
+  my ($self, $c, $allele_primary_identifier, $key) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $guard = $schema->txn_scope_guard();
+
+  my $allele_manager =
+    Canto::Curs::AlleleManager->new(config => $c->config(),
+                                    curs_schema => $schema);
+
+  $allele_manager->set_note($allele_primary_identifier, $key, undef);
+
+  $c->stash->{json_data} = {
+    status => 'success',
+  };
+
+  $guard->commit();
+
+  $c->forward('View::JSON');
+}
+
 sub ws_genotype_delete : Chained('top') PathPart('ws/genotype/delete')
+{
+  my ($self, $c, $feature_id) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  my $json_data = $c->req()->body_data();
+
+  $c->stash->{json_data} = $service_utils->delete_genotype($feature_id, $json_data);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_metagenotype_delete : Chained('top') PathPart('ws/metagenotype/delete')
 {
   my ($self, $c, $feature_id) = @_;
 
@@ -2532,7 +3306,7 @@ sub ws_genotype_delete : Chained('top') PathPart('ws/genotype/delete')
 
   my $guard = $schema->txn_scope_guard();
 
-  $c->stash->{json_data} = $service_utils->delete_genotype($feature_id, $json_data);
+  $c->stash->{json_data} = $service_utils->delete_metagenotype($feature_id, $json_data);
 
   $guard->commit();
 
@@ -2550,6 +3324,103 @@ sub ws_add_gene : Chained('top') PathPart('ws/gene/add')
                                                      config => $c->config());
 
   $st->{json_data} = $service_utils->add_gene_by_identifier($gene_identifier);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_add_organism : Chained('top') PathPart('ws/organism/add')
+{
+  my ($self, $c, $taxonid) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->add_organism_by_taxonid($taxonid);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_add_strain_by_id : Chained('top') PathPart('ws/strain_by_id/add')
+{
+  my ($self, $c, $track_strain_id) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->add_strain_by_id($track_strain_id);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_add_strain_by_name : Chained('top') PathPart('ws/strain_by_name/add')
+{
+  my ($self, $c, $taxon_id, @strain_name_parts) = @_;
+
+  my $strain_name = join '/', @strain_name_parts;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->add_strain_by_name($taxon_id, $strain_name);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_delete_organism : Chained('top') PathPart('ws/organism/delete')
+{
+  my ($self, $c, $taxonid) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->delete_organism_by_taxonid($taxonid);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_delete_strain_by_id : Chained('top') PathPart('ws/strain_by_id/delete')
+{
+  my ($self, $c, $track_strain_id) = @_;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->delete_strain_by_id($track_strain_id);
+
+  $c->forward('View::JSON');
+}
+
+sub ws_delete_strain_by_name : Chained('top') PathPart('ws/strain_by_name/delete')
+{
+  my ($self, $c, $taxon_id, @strain_name_parts) = @_;
+
+  my $strain_name = join '/', @strain_name_parts;
+
+  my $st = $c->stash();
+  my $schema = $st->{schema};
+
+  my $service_utils = Canto::Curs::ServiceUtils->new(curs_schema => $schema,
+                                                     config => $c->config());
+
+  $st->{json_data} = $service_utils->delete_strain_by_name($taxon_id, $strain_name);
 
   $c->forward('View::JSON');
 }
@@ -2572,7 +3443,11 @@ sub ws_settings_get_all : Chained('top') PathPart('ws/settings/get_all')
 
 sub ws_settings_set : Chained('top') PathPart('ws/settings/set')
 {
-  my ($self, $c, $key, $value) = @_;
+  my ($self, $c, $key) = @_;
+
+  my $body_data = _decode_json_content($c);
+
+  my $value = $body_data->{value};
 
   my $st = $c->stash();
   my $schema = $st->{schema};
@@ -2602,7 +3477,7 @@ sub cancel_approval : Chained('top') Args(0)
   my $schema = $c->stash()->{schema};
   $self->state()->set_state($schema, NEEDS_APPROVAL,
                             { force => APPROVAL_IN_PROGRESS });
-  $c->flash()->{message} = 'Session approval cancelled';
+  push @{$c->flash()->{message}}, 'Session approval cancelled';
 
   _redirect_and_detach($c);
 }

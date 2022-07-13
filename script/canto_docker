@@ -18,8 +18,36 @@ then
    exit 1
 fi
 
-CANTO_DOCKER_RUN_ARGS="--rm -ti --publish 5000:5000 --net=host --mount type=bind,source=$(pwd)/data,target=/data --mount type=bind,source=$(pwd)/import_export,target=/import_export --mount type=bind,source=$(pwd)/canto,target=/canto -w=/canto pombase/canto-base:v4"
+if [ ! -d logs ]
+then
+   echo 'missing "logs" directory - exiting'
+   exit 1
+fi
+
+EXTRA_ARGS=""
+
+if [ $(uname) = Linux ]
+then
+    EXTRA_ARGS="--net=host --env=OWLTOOLS_MEMORY"
+fi
+
+INTERACTIVE_ARGS="-ti"
+
+if [ $1 = '--non-interactive' ]
+then
+    shift
+    INTERACTIVE_ARGS=""
+fi
+
+if [ $1 = '--use-container-name' ]
+then
+    shift
+    INTERACTIVE_ARGS="$INTERACTIVE_ARGS --name canto"
+fi
+
+CANTO_DOCKER_RUN_ARGS="$EXTRA_ARGS --rm $INTERACTIVE_ARGS --mount type=bind,source=$(pwd)/logs,target=/logs --mount type=bind,source=$(pwd)/data,target=/data --mount type=bind,source=$(pwd)/import_export,target=/import_export --mount type=bind,source=$(pwd)/canto,target=/canto -w=/canto pombase/canto-base:v15"
 
 cd canto
 
-exec docker run -it $CANTO_DOCKER_RUN_ARGS "$@"
+exec docker run $CANTO_DOCKER_RUN_ARGS "$@"
+

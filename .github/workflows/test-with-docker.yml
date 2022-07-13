@@ -1,0 +1,22 @@
+name: Canto tests
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: pull base image
+      run: docker pull pombase/canto-base:v14
+    - name: run make test inside a Docker container
+      run: ./etc/docker-run-tests.sh

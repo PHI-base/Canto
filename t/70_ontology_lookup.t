@@ -76,7 +76,7 @@ cmp_deeply($parse_search_scope_subset_res, [{ include => 'is_a(GO:0055085)',
 my $config_subsets_to_ignore =
   $config->{ontology_namespace_config}{subsets_to_ignore};
 
-my @primary_exclude_subsets = @{$config_subsets_to_ignore->{primary}};
+my @primary_exclude_subsets = @{$config_subsets_to_ignore->{primary_autocomplete}};
 my @extension_exclude_subsets = @{$config_subsets_to_ignore->{extension}};
 
 
@@ -90,7 +90,7 @@ my @extension_exclude_subsets = @{$config_subsets_to_ignore->{extension}};
   ok(defined $results);
 
   # root terms shouldn't be returned because of the subsets_to_ignore
-  is(scalar(@$results), 0);
+  is(scalar(@$results), 1);
 }
 
 {
@@ -260,7 +260,6 @@ my $expected_fypo_term = {
   id => 'FYPO:0000114',
   name => 'cellular process phenotype',
   annotation_namespace => 'fission_yeast_phenotype',
-  annotation_type_name => 'phenotype',
   definition => 'A phenotype that affects a cellular process.',
   is_obsolete => 0,
 };
@@ -270,6 +269,7 @@ is($id_result->[0]->{name}, 'cellular process phenotype');
 is($id_result->[0]->{annotation_namespace}, 'fission_yeast_phenotype');
 
 cmp_deeply($id_result->[0], $expected_fypo_term);
+
 
 # check that value was cached
 $cached_value = $lookup->cache()->get($cache_key);
@@ -288,9 +288,8 @@ cmp_deeply($fypo_cpp, $expected_fypo_term);
 
 my $expected_fypo_obsolete_term = {
   id => 'FYPO:0002233',
-  name => 'viable elongated vegetative cell population',
+  name => 'OBSOLETE FYPO:0002233 viable elongated vegetative cell population',
   annotation_namespace => 'fission_yeast_phenotype',
-  annotation_type_name => 'phenotype',
   definition => 'A cell population phenotype in which all cells in the population are viable but longer than normal in the vegetative growth phase of the life cycle.',
   is_obsolete => 1,
   comment => 'This term was made obsolete because it is redundant with annotating to the equivalent cell phenotype plus a full-penetrance extension.',
@@ -415,9 +414,9 @@ $test_util->load_test_ontologies($ontology_index, 1, 1, 1);
 
 
 # test get_all()
-my @all_pco_terms = $lookup->get_all(ontology_name => 'phenotype_condition',
+my @all_pco_terms = $lookup->get_all(ontology_name => 'fission_yeast_phenotype_condition',
                                      exclude_subsets => \@primary_exclude_subsets);
-is (@all_pco_terms, 9);
+is (@all_pco_terms, 6);
 
 # test get_all() for a subset
 my @all_subset_1_terms =
@@ -445,30 +444,35 @@ my @all_subset_2_terms =
     }
   } $lookup->get_all(ontology_name => $two_term_subset,
                      exclude_subsets => \@primary_exclude_subsets);
-is (@all_subset_2_terms, 5);
+is (@all_subset_2_terms, 6);
 
 cmp_deeply(\@all_subset_2_terms,
            [
+             {
+               'name' => 'cytoplasmic membrane-bounded vesicle',
+               'id' => 'GO:0016023'
+             },
              {
                'id' => 'GO:0005487',
                'name' => 'nucleocytoplasmic transporter activity'
              },
              {
-               'id' => 'GO:0030141',
-               'name' => 'stored secretory granule'
+               'name' => 'stored secretory granule',
+               'id' => 'GO:0030141'
              },
              {
-               'id' => 'GO:0022857',
-               'name' => 'transmembrane transporter activity'
+               'name' => 'transmembrane transporter activity',
+               'id' => 'GO:0022857'
              },
              {
-               'id' => 'GO:0030133',
-               'name' => 'transport vesicle'
+               'name' => 'transport vesicle',
+               'id' => 'GO:0030133'
              },
              {
-               'name' => 'transporter activity',
-               'id' => 'GO:0005215'
-             }]);
+               'id' => 'GO:0005215',
+               'name' => 'transporter activity'
+             }
+           ]);
 
 
 my $subset_2_count =

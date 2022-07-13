@@ -3,8 +3,7 @@ package Canto::Controller::Tools;
 use strict;
 use warnings;
 use parent 'Catalyst::Controller';
-use Package::Alias PubmedUtil => 'Canto::Track::PubmedUtil',
-                   LoadUtil => 'Canto::Track::LoadUtil';
+use Package::Alias LoadUtil => 'Canto::Track::LoadUtil';
 use POSIX qw/strftime/;
 
 use Clone qw(clone);
@@ -17,6 +16,7 @@ use Canto::Util qw(trim);
 use Canto::Track::CuratorManager;
 use Canto::ChadoDB;
 use Canto::Chado::Utils;
+use Canto::Curs::State qw/:all/;
 
 use Moose;
 
@@ -255,45 +255,6 @@ sub triage :Local {
   }
 }
 
-sub _load_one_pub
-{
-  my $config = shift;
-  my $schema = shift;
-  my $pubmedid = shift;
-
-  my $raw_pubmedid;
-
-  $pubmedid =~ s/[^_\d\w:]+//g;
-
-  if ($pubmedid =~ /^\s*(?:pmid:|pubmed:)?(\d+)\s*$/i) {
-    $raw_pubmedid = $1;
-    $pubmedid = "PMID:$1";
-  } else {
-    my $message = 'You need to give the raw numeric ID, or the ID ' .
-      'prefixed by "PMID:" or "PubMed:"';
-    return (undef, $message);
-  }
-
-  my $pub = $schema->resultset('Pub')->find({ uniquename => $pubmedid });
-
-  if (defined $pub) {
-    return ($pub, undef);
-  } else {
-    my $xml = PubmedUtil::get_pubmed_xml_by_ids($config, $raw_pubmedid);
-
-    my $count = PubmedUtil::load_pubmed_xml($schema, $xml, 'user_load');
-
-    if ($count) {
-      $pub = $schema->resultset('Pub')->find({ uniquename => $pubmedid });
-      return ($pub, undef);
-    } else {
-      (my $numericid = $pubmedid) =~ s/.*://;
-      my $message = "No publication found in PubMed with ID: $numericid";
-      return (undef, $message);
-    }
-  }
-}
-
 sub pubmed_id_lookup : Local Form {
   my ($self, $c) = @_;
 
@@ -308,8 +269,9 @@ sub pubmed_id_lookup : Local Form {
       message => 'No PubMed ID given'
     }
   } else {
-    my ($pub, $message) =
-      _load_one_pub($c->config, $c->schema('track'), $pubmedid);
+    my $load_util = LoadUtil->new(schema => $c->schema('track'));
+
+    my ($pub, $message) = $load_util->load_pub_from_pubmed($c->config(), $pubmedid);
 
     if (defined $pub) {
       $result = {
@@ -325,13 +287,22 @@ sub pubmed_id_lookup : Local Form {
 
       my $sessions_rs = $pub->curs();
       if ($sessions_rs->count() > 0) {
-        my $first_session = $sessions_rs->first();
+        my $config = $c->config();
+        my $state = Canto::Curs::State->new(config => $config);
 
-        my $curator_manager = Canto::Track::CuratorManager->new(config => $c->config());
+        my @sessions = map {
+          my $curs_key = $_->curs_key();
+          my $schema = Canto::Curs::get_schema_for_key($config, $curs_key);
 
-        if (defined $curator_manager->current_curator($first_session->curs_key())) {
-          $result->{sessions} = [ map { $_->curs_key(); } $sessions_rs->all() ],
-        }
+          my ($session_state) = $state->get_state($schema);
+
+          {
+            session => $curs_key,
+              state => $session_state,
+            }
+        } $sessions_rs->all();
+
+        $result->{sessions} = \@sessions;
       }
     } else {
       $result = {

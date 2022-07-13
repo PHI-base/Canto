@@ -102,7 +102,12 @@ sub _ontology_results
     if ($extension_lookup) {
       push @exclude_subsets, @{$config_subsets_to_ignore->{extension}};
     } else {
-      push @exclude_subsets, @{$config_subsets_to_ignore->{primary}};
+
+      if ($search_string eq ':ALL:') {
+        push @exclude_subsets, @{$config_subsets_to_ignore->{primary_select}};
+      } else {
+        push @exclude_subsets, @{$config_subsets_to_ignore->{primary_autocomplete}};
+      }
     }
   }
 
@@ -112,6 +117,9 @@ sub _ontology_results
                                            exclude_subsets => \@exclude_subsets) };
     } else {
       my @results;
+      $search_string =~ s/^\s+//;
+      $search_string =~ s/\s+$//;
+
       if ($search_string eq ':ALL:') {
         @results =
           $lookup->get_all(ontology_name => $ontology_name,
@@ -121,6 +129,10 @@ sub _ontology_results
                            include_subset_ids => $include_subset_ids,
                            exclude_subsets => \@exclude_subsets);
       } else {
+        if (length $search_string == 0) {
+          return [];
+        }
+
         @results =
           @{$lookup->lookup(ontology_name => $ontology_name,
                             search_string => $search_string,
@@ -165,8 +177,7 @@ sub _gene_results
     $result = $adaptor->lookup(
       {
         search_organism => {
-          genus => $config->{instance_organism}->{genus},
-          species => $config->{instance_organism}->{species},
+          scientific_name => $config->{instance_organism}->{scientific_name},
         }
       },
       [$search_string]);
@@ -243,6 +254,15 @@ sub _pubs_results
   }
 }
 
+sub _strain_lookup
+{
+  my ($c, $taxonid) = @_;
+
+  my $strain_lookup = Canto::Track::get_adaptor($c->config(), 'strain');
+
+  return [$strain_lookup->lookup($taxonid)];
+}
+
 sub lookup : Local
 {
   my $self = shift;
@@ -257,6 +277,8 @@ sub lookup : Local
     ontology => \&_ontology_results,
     person => \&_person_results,
     pubs => \&_pubs_results,
+    strains => \&_strain_lookup,
+    organisms => \&_organism_lookup,
   );
 
   my $res_sub = $dispatch{$type_name};
@@ -279,6 +301,15 @@ sub lookup : Local
   $c->cache_page(100) unless $ENV{CANTO_DEBUG};
 
   $c->forward('View::JSON');
+}
+
+sub _organism_lookup
+{
+  my ($c, $type) = @_;
+
+  my $organism_lookup = Canto::Track::get_adaptor($c->config(), 'organism');
+
+  return [$organism_lookup->lookup_by_type($type)];
 }
 
 sub details : Local
@@ -334,6 +365,22 @@ sub canto_config : Local
   if ($allowed_keys->{$config_key}) {
     my $key_config = $config->for_json($config_key);
     if (defined $key_config) {
+      if ($config_key eq 'annotation_type_list') {
+        map {
+          if ($_->{admin_evidence_codes} && $_->{evidence_codes}) {
+
+            if ($c->user()) {
+              my $user = $c->user();
+              my $is_admin = $user->is_admin() ? JSON::true : JSON::false;
+
+              if ($is_admin) {
+                push @{$_->{evidence_codes}}, @{$_->{admin_evidence_codes}};
+              }
+            }
+          }
+        } @$key_config;
+      }
+
       if (ref $key_config) {
         $c->stash->{json_data} = $key_config;
       } else {

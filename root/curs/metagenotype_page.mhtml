@@ -1,0 +1,193 @@
+<%args>
+$curs_root_uri
+$pub
+$metagenotype
+$annotation_count
+@annotation_type_list
+</%args>
+
+<div ng-controller="MetagenotypeViewCtrl" ng-init="init(<% $annotation_count %>)">
+<div class="curs-annotate-feature-title">
+  <% $_unicode_allele_symbol->($metagenotype->display_name($c->config())) | n %>
+</div>
+% if (!$read_only_curs) {
+<div class="curs-box curs-half-width-section">
+  <div class="curs-box-title">
+Actions
+  </div>
+  <div class="curs-box-body">
+  <ul class="annotation-start">
+% for my $annotation_type (@types_to_show) {
+%   my $annotation_type_name = $annotation_type->{name};
+%   my $title = $annotation_type->{help_text} // '';
+%   my $action_path = $curs_root_uri . '/feature/metagenotype/annotate/' . $metagenotype_id;
+%     $action_path .= "/start/$annotation_type_name";
+%   my $type_display_name = $annotation_type->{display_name};
+    <li>
+%   if (!$annotation_type->{disabled}) {
+      <a title="<% $title %>" href="<% $action_path %>">
+%   }
+      <span class="annotation-type">
+Add a new <% $type_display_name %> for this metagenotype
+      </span>
+%   if (!$annotation_type->{disabled}) {
+      </a>
+%   }
+    </li>
+% }
+  </ul>
+  </div>
+</div>
+% }
+
+<div id="curs-genotype-details" class="curs-box curs-half-width-section">
+  <div class="curs-box-title">
+Details
+  </div>
+  <div class="curs-box-body">
+    <div class="curs-allele-list">
+    <table class="curs-definition-table">
+      <tbody>
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Pathogen</td>
+% } else {
+          <td class="title">Organism A</td>
+% }
+          <td><% $interactor_a->{'organism'} %></td>
+        </tr>
+% if ($strains_mode) {
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Pathogen strain</td>
+% } else {
+          <td class="title">Strain A</td>
+% }
+          <td><% $interactor_a->{'strain'} %></td>
+        </tr>
+% }
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Pathogen genotype</td>
+% } else {
+          <td class="title">Genotype A</td>
+% }
+          <td>
+            <a href="<% $genotype_link_a %>">
+              <% $_unicode_allele_symbol->($interactor_a->{'genotype'}) | n %>
+            </a>
+          </td>
+        </tr>
+
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Host</td>
+% } else {
+          <td class="title">Organism B</td>
+% }
+          <td><% $interactor_b->{'organism'} %></td>
+        </tr>
+% if ($strains_mode) {
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Host strain</td>
+% } else {
+          <td class="title">Strain B</td>
+% }
+          <td><% $interactor_b->{'strain'} %></td>
+        </tr>
+% }
+        <tr>
+% if ($pathogen_host_mode) {
+          <td class="title">Host genotype</td>
+% } else {
+          <td class="title">Genotype B</td>
+% }
+          <td>
+% if ($genotype_link_b) {
+            <a href="<% $genotype_link_b %>">
+% }
+              <% $_unicode_allele_symbol->($interactor_b->{'genotype'}) | n %>
+% if ($genotype_link_b) {
+            </a>
+% }
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    </div>
+  </div>
+</div>
+
+<div class="clearall"></div>
+
+<button type="button"
+        ng-click="toSummaryPage()"
+        class="btn btn-primary curs-back-button">&larr; Go to summary</button>
+
+<button type="button"
+        ng-click="toMetagenotypeManagement()"
+        class="btn btn-primary curs-back-button">Metagenotype management &rarr;</button>
+
+<annotation-table-list feature-type-filter="metagenotype" feature-id-filter="<% $metagenotype_id %>"
+                       feature-filter-display-name="<% $metagenotype->display_name($c->config()) %>"></annotation-table-list>
+
+</div>
+
+<%init>
+sub get_genotype_details {
+  my $genotype = shift;
+
+  my $config = $c->config();
+  my $org_lookup = Canto::Track::get_adaptor($config, 'organism');
+  my $strain_lookup = Canto::Track::get_adaptor($config, 'strain');
+
+  my $taxon_id = $genotype->organism()->taxonid();
+  my $strain = $genotype->strain();
+
+  return {
+    "organism" => $org_lookup->lookup_by_taxonid($taxon_id)->{scientific_name},
+    "strain" => $strain->lookup_strain_name($strain_lookup),
+    "genotype" => $genotype->display_name($config)
+  };
+}
+
+sub genotype_link {
+  my $curs_root_uri = shift;
+  my $genotype = shift;
+
+  my $id = $genotype->feature_id();
+
+  my $alleles = $genotype->allele_string($c->config());
+
+  if ($alleles ne '') {
+    return $curs_root_uri . '/feature/genotype/view/' . $id;
+  }
+  return undef;
+}
+
+my $metagenotype_id = $metagenotype->metagenotype_id();
+
+my $st = $c->stash();
+
+my @types_to_show = grep {
+  $_->{feature_type} eq 'metagenotype'
+} @annotation_type_list;
+
+my $start_path = $c->stash()->{curs_root_uri};
+my $pathogen_host_mode = $c->stash()->{pathogen_host_mode};
+my $strains_mode = $c->stash()->{strains_mode};
+my $read_only_curs = $c->stash()->{read_only_curs};
+
+my $interactor_a = get_genotype_details($metagenotype->first_genotype());
+my $interactor_b = get_genotype_details($metagenotype->second_genotype());
+
+my $genotype_link_a = genotype_link($start_path, $metagenotype->first_genotype());
+my $genotype_link_b = genotype_link($start_path, $metagenotype->second_genotype());
+
+my $_unicode_allele_symbol = sub {
+  my $text = shift;
+  $text =~ s/delta/&Delta;/gr;
+};
+</%init>

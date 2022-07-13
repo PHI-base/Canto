@@ -53,6 +53,7 @@ __PACKAGE__->config(name => 'Canto',
                       disable_index => 1,
                     },
                     using_frontend_proxy => 1,
+                    encoding => 'utf8',
                    );
 
 
@@ -184,5 +185,6 @@ around 'uri_for' => sub {
 };
 
 Canto::DBUtil::check_schema_version($config, schema(__PACKAGE__, 'track'));
+Canto::DBUtil::check_db_organism($config, schema(__PACKAGE__, 'track'));
 
 1;

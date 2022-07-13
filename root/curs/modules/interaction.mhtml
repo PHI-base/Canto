@@ -8,8 +8,8 @@ $feature
      annotation-type-name="<% $annotation_type_name %>" id="curs-interaction">
   <div ng-show="data.evidenceConfirmed" class="curs-box">
     <div class="curs-box-title">
-      Select the gene or genes that interact with <% $feature_display_name %> ...
-<& /curs/inline_help.mhtml, key => "${annotation_type_name}_select_gene" &>
+      Select the gene or genes that interact with <% $feature_display_name %>
+      <help-icon key="<% $annotation_type_name . '_select_gene' %>"></help-icon>
     </div>
     <div class="curs-box-body">
       <multi-feature-chooser feature-type="gene" selected-feature-ids="selectedFeatureIds">
@@ -17,12 +17,12 @@ $feature
 
       <button type="submit" class="btn btn-primary curs-back-button"
               title="Back to previous page"
-              ng-click="unconfirmEvidence()">&lt;- Back</button>
+              ng-click="unconfirmEvidence()">&larr; Back</button>
 
       <button type="submit" class="btn btn-primary curs-finish-button"
               title="{{someFeaturesSelected() ? 'Confirm' : 'Select some genes to confirm this interaction'}}"
               ng-disabled="!someFeaturesSelected()"
-              ng-click="addInteractionAndEvidence()">Confirm -&gt;</button>
+              ng-click="addInteractionAndEvidence()">Confirm &rarr;</button>
     </div>
   </div>
 
@@ -49,11 +49,11 @@ the interaction once.
     </div>
 
     <button type="submit" class="btn btn-primary curs-back-button"
-            title="&lt;- Back"
-            ng-click="backToGene()">&lt;- Back</button>
+            title="&larr; Back"
+            ng-click="backToGene()">&larr; Back</button>
     <button type="submit" class="btn btn-primary curs-finish-button"
             ng-disabled="!isValidEvidence() || postInProgress"
-            ng-click="confirmEvidence()" >Proceed -&gt;</button>
+            ng-click="confirmEvidence()" >Proceed &rarr;</button>
 
   </div>
 </div>
@@ -63,5 +63,5 @@ my $root_path = $c->stash()->{curs_root_path};
 
 my $gene_count = $c->stash()->{schema}->resultset('Gene')->count();
 
-my $feature_display_name = $feature->display_name();
+my $feature_display_name = $feature->display_name($c->config());
 </%init>

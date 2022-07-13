@@ -64,7 +64,7 @@ my $app_config_file = "canto.yaml";
 
 =head2 new
 
- Usage   : my $config = Canto::Config->new($file_name, [$file_name_2, ...]);
+ Usage   : my $config = Canto::Config->new(\@file_names);
  Function: Create a new Config object from the given files.  If no files are
            given read from the default application configuration file.
 
@@ -72,7 +72,8 @@ my $app_config_file = "canto.yaml";
 sub new
 {
   my $class = shift;
-  my @config_file_names = @_;
+  my @config_file_names = @{shift // []};
+  my $upgrading = shift;
 
   if (@config_file_names == 0) {
     push @config_file_names, $app_config_file;
@@ -88,10 +89,10 @@ sub new
 
   for my $config_file_name (@config_file_names) {
     # merge new config
-    $self->merge_config($config_file_name);
+    $self->merge_config([$config_file_name], $upgrading);
   }
 
-  $self->setup();
+  $self->setup($upgrading);
 
   return $self;
 }
@@ -109,19 +110,20 @@ sub new_test_config
 
   my $config = get_config();
 
-  return $self->new($app_config_file, $config->{test_config_file});
+  return $self->new([$app_config_file, $config->{test_config_file}]);
 }
 
 =head2 merge_config
 
- Usage   : $config->merge_config($config_file_name, [...]);
+ Usage   : $config->merge_config(\@config_file_names);
  Function: merge the given config files into a Config object
 
 =cut
 sub merge_config
 {
   my $self = shift;
-  my @file_names = @_;
+  my @file_names = @{shift // []};
+  my $upgrading = shift;
 
   my $cfg = Config::Any->load_files({ files => \@file_names,
                                       use_ext => 1, });
@@ -129,13 +131,62 @@ sub merge_config
   for my $new_config (map { my ($file_name, $config) = %$_; $config } @$cfg) {
     if (defined $new_config) {
       my $merge = Hash::Merge->new('RIGHT_PRECEDENT');
+
+      my $new_available_annotation_type_list =
+        delete $new_config->{available_annotation_type_list};
+
       my $new = $merge->merge({%$self}, $new_config);
+
+      if (defined $new_available_annotation_type_list) {
+        # special case: replace rather than append the new available_annotation_type_list
+        $new->{available_annotation_type_list} = $new_available_annotation_type_list;
+      }
+
       %$self = %$new;
     } else {
       # empty file returns undef
     }
   }
-  $self->setup();
+}
+
+sub _set_host_organisms
+{
+  my $self = shift;
+
+  my $track_schema = Canto::TrackDB->new(config => $self);
+
+  $self->{host_organisms} = [];
+
+  my $host_organism_taxonids = $self->{host_organism_taxonids};
+
+  if ($host_organism_taxonids && @$host_organism_taxonids > 0) {
+    $self->{pathogen_host_mode} = 1;
+    $self->{multi_organism_mode} = 1;
+
+    for my $taxonid (@{$self->{host_organism_taxonids}}) {
+      my $rs = $track_schema->resultset('Organismprop')
+        ->search({ value => $taxonid,
+                   'type.name' => 'taxon_id' },
+                 {
+                   join => 'type', prefetch => 'organism' });
+      if ($rs->count() == 0) {
+        die qq|can't find Organism in database for taxon ID "$taxonid"|;
+      }
+
+      push @{$self->{host_organisms}}, $rs->first()->organism();
+    }
+  }
+}
+
+sub host_organisms
+{
+  my $self = shift;
+
+  if (!$self->{host_organisms}) {
+    $self->_set_host_organisms()
+  }
+
+  return $self->{host_organisms};
 }
 
 =head2 setup
@@ -147,6 +198,11 @@ sub merge_config
 sub setup
 {
   my $self = shift;
+  my $upgrading = shift;
+
+  if ($self->{extra_config_files}) {
+    $self->merge_config($self->{extra_config_files}, $upgrading);
+  }
 
   my @ext_conf = ();
 
@@ -242,6 +298,25 @@ sub setup
     }
   }
 
+  my $namespace_term_evidence_codes = $self->{namespace_term_evidence_codes};
+
+  if ($namespace_term_evidence_codes) {
+    while (my ($namespace, $ev_configs) = each %$namespace_term_evidence_codes) {
+      for my $ev_config (@$ev_configs) {
+        my $restriction = $ev_config->{constraint};
+        my $ev_codes = $ev_config->{evidence_codes};
+        map {
+          my $new_ev_code = $_;
+          if (!$self->{evidence_types}->{$new_ev_code}) {
+            $self->{evidence_types}->{$new_ev_code} = {
+              name => $new_ev_code,
+            };
+          }
+        } @$ev_codes;
+      }
+    }
+  }
+
   # create an inverted map of evidence types so that evidence codes
   # can be looked up by name
   if (my $evidence_types = $self->{evidence_types}) {
@@ -264,6 +339,12 @@ sub setup
   # Service::canto_config() simpler
   if (defined $self->{allele_type_list}) {
     for my $allele_type (@{$self->{allele_type_list}}) {
+      if ($allele_type->{name} =~ /^wild[ _]?type$/) {
+        $allele_type->{autopopulate_name} = $self->{wildtype_name_template};
+      }
+      if ($allele_type->{name} eq 'deletion') {
+        $allele_type->{autopopulate_name} = $self->{deletion_name_template};
+      }
       my $export_type = $allele_type->{export_type} // $allele_type->{name};
       push @{$self->{export_type_to_allele_type}->{$export_type}}, $allele_type;
       $self->{allele_types}->{$allele_type->{name}} = $allele_type;
@@ -302,6 +383,20 @@ sub setup
     for my $annotation_type (@annotation_type_list) {
       my $annotation_type_name = $annotation_type->{name};
 
+      if (!$annotation_type->{evidence_codes}) {
+        $annotation_type->{evidence_codes} = [];
+      }
+
+      for my $ev_code (@{$annotation_type->{evidence_codes}}) {
+        if (!exists $self->{evidence_types}->{$ev_code}) {
+          $self->{evidence_types}->{$ev_code} = {
+            name => $ev_code,
+          };
+
+          $self->{evidence_types_by_name}->{lc $ev_code} = $ev_code;
+        }
+      }
+
       if (exists $self->{annotation_types}->{$annotation_type_name}) {
         my $merge = Hash::Merge->new('RIGHT_PRECEDENT');
         my $configured_type =
@@ -311,15 +406,56 @@ sub setup
 
         # handle evidence codes differently so codes don't get duplicated
         $annotation_type->{evidence_codes} = $configured_type->{evidence_codes};
+        $annotation_type->{term_evidence_codes} = $configured_type->{term_evidence_codes};
+      }
+
+      if (!defined $annotation_type->{ontology_size}) {
+        $annotation_type->{ontology_size} = 'large';
       }
 
       if (!defined $annotation_type->{short_display_name}) {
         $annotation_type->{short_display_name} = $annotation_type->{display_name};
       }
       $self->{annotation_types}->{$annotation_type_name} = $annotation_type;
-      $annotation_type->{namespace} //= $annotation_type->{name};
-      $self->{annotation_types_by_namespace}->{$annotation_type->{namespace}} =
-        $annotation_type;
+
+      if ($annotation_type->{category} eq 'ontology') {
+        $annotation_type->{namespace} //= $annotation_type->{name};
+      }
+
+      my $namespace = $annotation_type->{namespace};
+
+      if (defined $namespace) {
+        $self->{annotation_types_by_namespace}->{$namespace} //= [];
+
+        if (!grep {
+          $_->{name} eq $annotation_type->{name}
+        } @{$self->{annotation_types_by_namespace}->{$namespace}}) {
+          push @{$self->{annotation_types_by_namespace}->{$namespace}}, $annotation_type;
+        }
+
+        if (!defined $annotation_type->{term_evidence_codes}) {
+          $annotation_type->{term_evidence_codes} =
+            $self->{namespace_term_evidence_codes}->{$namespace};
+        }
+      }
+
+      # if an evidence code is not in the main evidence_codes map, add it
+      for my $ev_code (@{$annotation_type->{evidence_codes}}) {
+        if (!defined $self->{evidence_types}->{$ev_code}) {
+          $self->{evidence_types}->{$ev_code} = {
+            name => $ev_code,
+          };
+        }
+      }
+
+      # if an evidence code is not in the main evidence_codes map, add it
+      for my $ev_code (@{$annotation_type->{evidence_codes}}) {
+        if (!defined $self->{evidence_types}->{$ev_code}) {
+          $self->{evidence_types}->{$ev_code} = {
+            name => $ev_code,
+          };
+        }
+      }
 
       # if any evidence code for this type needs a with or from field, set
       # needs_with_or_from in the type
@@ -336,39 +472,79 @@ sub setup
 
   my $instance_organism = $self->{instance_organism};
 
+  $self->{multi_organism_mode} = !$instance_organism;
+
+  $self->{host_organism_taxonids} //= [];
+
+  if (@{$self->{host_organism_taxonids}} > 0) {
+    $self->{pathogen_host_mode} = 1;
+    $self->{multi_organism_mode} = 1;
+  } else {
+    $self->{pathogen_host_mode} = 0;
+  }
+
+  $self->{_strain_species_taxon_map} = {};
+  $self->{_reference_strain_taxon_map} = {};
+
+  my %strain_species_map = ();
+  if ($self->{species_strain_map}) {
+    while (my ($species_taxon_id, $species_details) = each %{$self->{species_strain_map}}) {
+      if ($species_details->{reference_strain}) {
+        $self->{_reference_strain_taxon_map}->{$species_details->{reference_strain}} =
+          $species_taxon_id;
+      }
+      if ($species_details->{other_strains}) {
+        map {
+          my $strain_taxon_id = $_;
+          $strain_species_map{$strain_taxon_id} = $species_taxon_id;
+        } @{$species_details->{other_strains}};
+      }
+    }
+  }
+  $self->{_strain_species_taxon_map} = \%strain_species_map;
+
   my $connect_string = $self->model_connect_string('Track');
 
   # we need to check that the track db exists in case we're using this
   # Config before a track db is made
-  if (defined $instance_organism && defined $connect_string &&
-      -f Canto::DBUtil::connect_string_file_name($connect_string)) {
+  if (defined $connect_string &&
+        -f Canto::DBUtil::connect_string_file_name($connect_string) &&
+      !$upgrading) {
+
     my $track_schema = Canto::TrackDB->new(config => $self);
 
-    my $taxonid = $instance_organism->{taxonid};
+    if (defined $instance_organism) {
+      my $taxonid = $instance_organism->{taxonid};
 
-    if (!defined $taxonid) {
-      die "instance_organism configuration has no taxonid field";
-    }
+      if (!defined $taxonid) {
+        die "instance_organism configuration has no taxonid field";
+      }
 
-    my $rs = $track_schema->resultset('Organismprop')
-      ->search({ value => $taxonid,
-                 'type.name' => 'taxon_id' },
-               { join => 'type' });
-    if ($rs->count() > 1) {
-      die "matched multiple organismprops with taxonid: $taxonid";
-    }
+      my $rs = $track_schema->resultset('Organismprop')
+        ->search({ value => $taxonid,
+                   'type.name' => 'taxon_id' },
+                 {
+                   join => 'type' });
+      if ($rs->count() > 1) {
+        die "matched multiple organismprops with taxonid: $taxonid";
+      }
 
-    if ($rs->count() == 0) {
-      warn qq(can't find an organism in the DB using taxonid "$taxonid" from ) .
-        qq("instance_organism" configuration so this Canto will run in ) .
-        qq(multi-organism mode);
-      delete $self->{instance_organism};
-    } else {
-      my $organism = $rs->first()->organism();
+      if ($rs->count() == 0) {
+        warn qq(can't find an organism in the DB using taxonid "$taxonid" from ) .
+          qq("instance_organism" configuration so this Canto will run in ) .
+          qq(multi-organism mode);
+        delete $self->{instance_organism};
+      } else {
+        my $organism = $rs->first()->organism();
 
-      $instance_organism->{organism_id} = $organism->organism_id();
-      $instance_organism->{species} = $organism->species();
-      $instance_organism->{genus} = $organism->genus();
+        $instance_organism->{organism_id} = $organism->organism_id();
+        $instance_organism->{scientific_name} = $organism->scientific_name();
+
+        if ($self->{host_organism_taxonids} && @{$self->{host_organism_taxonids}} > 0) {
+          warn "warning: it doesn't make sense to set both " .
+            "host_organism_taxonids and instance_organism";
+        }
+      }
     }
   }
 }
@@ -443,19 +619,23 @@ sub model_connect_string
 =cut
 sub get_config
 {
+  my %args = @_;
+  my $upgrading = $args{upgrading};
+
   my $lc_app_name = lc get_application_name();
   my $uc_app_name = uc $lc_app_name;
 
   my $suffix = $ENV{"${uc_app_name}_CONFIG_LOCAL_SUFFIX"};
 
   my $file_name = "$lc_app_name.yaml";
-  my $config = __PACKAGE__->new($file_name);
+  my @file_names = ($file_name);
 
   if (defined $suffix) {
     my $local_file_name = "${lc_app_name}_$suffix.yaml";
-
-    $config->merge_config($local_file_name);
+    push @file_names, $local_file_name;
   }
+
+  my $config = __PACKAGE__->new(\@file_names, $upgrading);
 
   return $config;
 }
@@ -539,6 +719,27 @@ sub for_json
   } HASH, $data;
 
   return $data;
+}
+
+=head2 get_species_taxon_of_strain_taxon
+
+ Usage   : my $org_taxon_id = $config->get_species_taxon_of_strain_taxon($strain_taxon_id);
+ Function: Given a taxon ID from a strain (eg. 4536 "Oryza sativa f. spontanea"), return
+           the taxon species ID of the species (eg. 4530 "Oryza sativa").  The mapping
+           is configured by "species_strain_map" in the config file
+ Returns : The species taxon ID or undef if the strain taxon ID isn't in the map.
+
+=cut
+
+
+sub get_species_taxon_of_strain_taxon
+{
+  my $self = shift;
+
+  my $strain_taxon_id = shift;
+
+  return $self->{_strain_species_taxon_map}->{$strain_taxon_id} //
+    $self->{_reference_strain_taxon_map}->{$strain_taxon_id};
 }
 
 1;

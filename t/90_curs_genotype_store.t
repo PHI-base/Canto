@@ -50,6 +50,7 @@ test_psgi $app, sub {
         genotype_name => $genotype_name,
         genotype_background => 'h+',
         genotype_identifier => $genotype_identifier,
+        taxonid => 4896,
         alleles =>
           [
             {
@@ -65,7 +66,7 @@ test_psgi $app, sub {
               # new allele
               name => "ssm4-h1",
               description => "K10G",
-              type => "mutation of single amino acid residue",
+              type => "amino acid substitution(s)",
               expression => "knockdown",
               gene_id => 2,
             },
@@ -111,6 +112,7 @@ test_psgi $app, sub {
       genotype_name => "h+ xyz-aa-1",
       genotype_background => 'h+',
       genotype_identifier => "h+ test-3",
+      taxonid => 4896,
       alleles =>
         [
           @alleles,

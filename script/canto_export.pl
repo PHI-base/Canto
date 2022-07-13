@@ -5,6 +5,8 @@ use warnings;
 use Carp;
 use File::Basename;
 
+use open ':std', ':encoding(UTF-8)';
+
 use Getopt::Long qw(:config require_order);
 
 BEGIN {
@@ -32,7 +34,8 @@ my $result = GetOptions ("help|h" => \$do_help,
 
 my %export_modules = (
   'canto-json' => 'Canto::Export::CantoJSON',
-  'tab-zip' => 'Canto::Export::CantoJSON',
+  'gaf' => 'Canto::Export::GeneAssociationFile',
+  'tab-zip' => 'Canto::Export::TabZip',
 );
 
 sub usage

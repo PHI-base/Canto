@@ -140,9 +140,16 @@ sub _make_term_hash
   }
   my $annotation_namespace = $cvterm->cv()->name();
   $term_hash{annotation_namespace} = $annotation_namespace;
-  $term_hash{annotation_type_name} =
-    $self->config()->{annotation_types_by_namespace}->{$annotation_namespace}->{name} //
-    $annotation_namespace;
+
+  my $annotation_types = $self->config()->{annotation_types_by_namespace}->{$annotation_namespace};
+
+  if ($annotation_types) {
+    if (@{$annotation_types} == 1) {
+      $term_hash{annotation_type_name} = $annotation_types->[0]->{name};
+    }
+  } else {
+    $term_hash{annotation_type_name} = $annotation_namespace;
+  }
 
   if ($include_definition) {
     $term_hash{definition} = $cvterm->definition();
@@ -157,6 +164,8 @@ sub _make_term_hash
   }
 
   if ($include_children) {
+    my %seen = ();
+
     @{$term_hash{children}} = ();
 
     my $search_details;
@@ -178,9 +187,12 @@ sub _make_term_hash
     my @child_hashes = ();
 
     for my $child_cvterm (@child_cvterms) {
-      push @child_hashes,
-        {$self->_make_term_hash($child_cvterm,
-                                $child_cvterm->cv()->name(), 0, 0, 0, undef)};
+      if (!$seen{$child_cvterm->cvterm_id()}) {
+        push @child_hashes,
+          {$self->_make_term_hash($child_cvterm,
+                                  $child_cvterm->cv()->name(), 0, 0, 0, undef)};
+        $seen{$child_cvterm->cvterm_id()} = 1;
+      }
     }
 
     @child_hashes = sort {
@@ -442,7 +454,7 @@ sub lookup_by_name
 
 =head2 lookup_by_id
 
- Usage   : my $result = $lookup->lookup_by_id(id => $term_name);
+ Usage   : my $result = $lookup->lookup_by_id(id => $termid);
  Function: Return the detail of the with the given id
  Args    : id - the id to search for
            include_children - include data about the child terms (default: 0)
@@ -500,7 +512,11 @@ sub lookup_by_id
   my @terms = $dbxref->cvterms();
 
   if (@terms > 1) {
-    die "internal error: looked up $term_id and got more than one result";
+    warn "internal error: looked up $term_id and got more than one result:\n";
+    for my $term (@terms) {
+      warn '  ', $term->name(), ' (', $term->cv()->name(), ")\n";
+    }
+    die "\n";
   }
 
   my $cvterm;

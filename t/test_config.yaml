@@ -3,19 +3,19 @@ test_config:
   data_dir: "t/data"
   curation_spreadsheet: "t/data/community_curation_stats_small.txt"
   organisms:
-    - genus: Schizosaccharomyces
-      species: pombe
+    - scientific_name: Schizosaccharomyces pombe
       taxonid: 4896
-    - genus: Saccharomyces
-      species: cerevisiae
+      common_name: "fission yeast"
+    - scientific_name: Saccharomyces cerevisiae
       taxonid: 4932
   test_chado_db: "chado_test_db.sqlite3"
   test_genes_file: "t/data/pombe_genes.txt"
   test_genes_file_organism_2: "t/data/cerevisiae_genes.txt"
   test_go_obo_file: "t/data/go_small.obo"
   test_phenotype_obo_file: "t/data/phenotype_small.obo"
+  test_phipo_obo_file: "t/data/phipo_small.obo"
   test_psi_mod_obo_file: "t/data/psi_mod_small.obo"
-  test_peco_obo_file: "t/data/peco_small.obo"
+  test_fyeco_obo_file: "t/data/fyeco_small.obo"
   test_so_obo_file: "t/data/so_simple_small.obo"
   test_extension_conf: 't/data/extension_config.tsv'
   test_pubmed_xml: 'entrez_pubmed.xml'
@@ -33,11 +33,11 @@ test_config:
          uniquename: PMID:19686603
        - curs_key: aaaa0003
          uniquename: PMID:19436749
-         submitter_email: "kevin.hardwick@ed.ac.uk"
+         submitter_email: "kevin.hardwick@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk"
          submitter_name: "Foo Bar"
        - curs_key: aaaa0004
          uniquename: PMID:18426916
-         submitter_email: "fred.smith@ed.ac.uk"
+         submitter_email: "fred.smith@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk"
          submitter_name: "Fred Smith"
          current_gene: "SPCC1739.10"
          genes:
@@ -46,7 +46,7 @@ test_config:
     curs_annotations_1:
        - curs_key: aaaa0005
          uniquename: PMID:18426916
-         submitter_email: "fred.smith@ed.ac.uk"
+         submitter_email: "fred.smith@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk"
          submitter_name: "Fred Smith"
          current_gene: "SPCC1739.10"
          genes:
@@ -63,7 +63,7 @@ test_config:
                evidence_code: IMP
                term_ontid: GO:0055085
                curator:
-                 email: kevin.hardwick@ed.ac.uk
+                 email: kevin.hardwick@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk
                  name: Kevin Hardwick
                  community_curated: 0
            - type: cellular_component
@@ -76,13 +76,13 @@ test_config:
                term_ontid: GO:0030133
                with_gene: SPCC1739.10
                curator:
-                 email: fred.smith@ed.ac.uk
+                 email: fred.smith@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk
                  name: Fred Smith
                  community_curated: 0
     curs_annotations_2:
        - curs_key: aaaa0006
          uniquename: PMID:18426916
-         submitter_email: "other.tester@pombase.org"
+         submitter_email: "other.tester@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
          submitter_name: "Other Tester"
          current_gene: "SPBC1826.01c"
          genes:
@@ -97,12 +97,12 @@ test_config:
                evidence_code: IMP
                term_ontid: GO:0055085
                curator:
-                 email: other.tester@pombase.org
+                 email: other.tester@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org
                  name: Other Tester
                  community_curated: 0
        - curs_key: aaaa0007
          uniquename: PMID:19756689
-         submitter_email: "some.testperson@pombase.org"
+         submitter_email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
          submitter_name: "Some Testperson"
          current_gene: "SPBC1826.01c"
          genes:
@@ -116,12 +116,19 @@ test_config:
                - primary_identifier: 'SPAC27D7.13c:aaaa0007-2'
                  name: ssm4KE
                  description: G40A,K43E
-                 type: 'mutation of single amino acid residue'
+                 type: 'amino acid substitution(s)'
+                 synonyms:
+                   - ssm4KE-a1
                - primary_identifier: 'SPAC27D7.13c:aaaa0007-3'
                  name: ssm4-D4
                  description: 'del_100-200'
                  type: 'partial deletion, nucleotide'
                  expression: 'Knockdown'
+                 synonyms:
+                   - ssm4-c1
+                 allele_notes:
+                   - key: note_test_key
+                     value: note_test_value
                - primary_identifier: 'SPAC27D7.13c:aaaa0007-4'
                  description: 'del_200-300'
                  type: 'partial deletion, nucleotide'
@@ -136,12 +143,21 @@ test_config:
            - identifier: "aaaa0007-genotype-test-1"
              name: "SPCC63.05delta ssm4KE"
              background: "h+"
+             organism:
+               taxonid: 4896
              alleles(Allele:primary_identifier):
                - 'SPAC27D7.13c:aaaa0007-1'
                - 'SPCC63.05:aaaa0007-1'
            - identifier: "aaaa0007-genotype-test-2"
+             organism:
+               taxonid: 4896
              alleles(Allele:primary_identifier):
                - "SPAC27D7.13c:aaaa0007-3"
+         metagenotypes:
+           - identifier: "test-metagenotype-1"
+             first_genotype_id(Genotype:identifier): "aaaa0007-genotype-test-1"
+             second_genotype_id(Genotype:identifier): "aaaa0007-genotype-test-2"
+             type: "interaction"
          annotations:
            - type: biological_process
              status: new
@@ -155,7 +171,7 @@ test_config:
                  name: miscellaneous transmembrane transport
                  definition: The process in which miscellaneous stuff is transported from one side of a membrane to the other.
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
            - type: biological_process
@@ -170,18 +186,23 @@ test_config:
                extension:
                  -
                    - relation: 'exists_during'
+                     rangeType: 'Ontology'
                      rangeValue: 'GO:0051329'
                    - relation: 'has_substrate'
+                     rangeType: 'Gene'
                      rangeValue: 'PomBase:SPBC1105.11c'
                    - relation: 'requires_feature'
+                     rangeType: 'Gene'
                      rangeValue: 'Pfam:PF00564'
                  -
                    - relation: 'exists_during'
+                     rangeType: 'Ontology'
                      rangeValue: 'GO:0051329'
                    - relation: 'has_substrate'
+                     rangeType: 'Gene'
                      rangeValue: 'PomBase:SPBC1105.11c'
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
            - type: molecular_function
@@ -193,23 +214,24 @@ test_config:
                evidence_code: IDA
                term_ontid: GO:0022857
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
-           - type: genetic_interaction
+           - type: genotype_interaction
              status: new
-             genes(Gene:primary_identifier):
-               - SPCC63.05
+             metagenotypes(Metagenotype:identifier):
+               - test-metagenotype-1
              pub(Pub:uniquename): PMID:19756689
              data:
                evidence_code: Synthetic Haploinsufficiency
-               interacting_genes:
-                 - primary_identifier: SPBC14F5.07
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
-           - type: genetic_interaction
+               term_ontid: FYPO:0000114
+               conditions:
+                 - 'FYECO:0000137'
+           - type: physical_interaction
              status: new
              genes(Gene:primary_identifier):
                - SPCC63.05
@@ -219,7 +241,7 @@ test_config:
                interacting_genes:
                  - primary_identifier: SPAC27D7.13c
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
            - type: phenotype
@@ -231,10 +253,10 @@ test_config:
                evidence_code: Epitope-tagged protein immunolocalization experiment data
                term_ontid: FYPO:0000013
                conditions:
-                 - 'PECO:0000137'
+                 - 'FYECO:0000137'
                  - 'rich medium'
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
            - type: phenotype
@@ -246,7 +268,7 @@ test_config:
                evidence_code: Co-immunoprecipitation experiment
                term_ontid: FYPO:0000017
                curator:
-                 email: "some.testperson@pombase.org"
+                 email: "some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Some Testperson"
                  community_curated: 0
            - type: post_translational_modification
@@ -258,9 +280,22 @@ test_config:
                evidence_code: ISS
                term_ontid: MOD:01157
                curator:
-                 email: "a.n.other.testperson@pombase.org"
+                 email: "a.n.other.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org"
                  name: "Another Testperson"
                  community_curated: 1
+
+enabled_annotation_type_list:
+  - molecular_function
+  - biological_process
+  - cellular_component
+  - phenotype
+  - post_translational_modification
+  - wt_rna_expression
+  - wt_protein_expression
+  - genotype_interaction
+  - genetic_interaction
+  - physical_interaction
+
 implementation_classes:
   ontology_annotation_adaptor: 'Canto::Chado::OntologyAnnotationLookup'
   interaction_annotation_adaptor: 'Canto::Chado::InteractionAnnotationLookup'
@@ -274,12 +309,34 @@ chado_feature_implementation_classes:
 # add a subset from the GO OBO file for testing
 ontology_namespace_config:
   subsets_to_ignore:
-    primary:
-      - "is_a(canto_root_subset)"
-      - "is_a(gosubset_prok)"
+    primary_autocomplete:
+      - "is_a(Grouping_terms)"
+    primary_select:
+      - "is_a(Grouping_terms)"
       - "is_a(qc_do_not_annotate)"
     extension:
       - "is_a(canto_root_subset)"
+  do_not_annotate_subsets:
+    - "is_a(canto_root_subset)"
+    - "is_a(qc_do_not_annotate)"
+    - "is_a(gocheck_do_not_annotate)"
+    - "is_a(gocheck_do_not_manually_annotate)"
 
 extension_conf_files:
   - t/data/extension_config.tsv
+
+email:
+  from_address: DO_NOT_EMAIL
+
+enabled_annotation_type_list:
+  - disease_formation_phenotype
+  - molecular_function
+  - biological_process
+  - cellular_component
+  - phenotype
+  - post_translational_modification
+  - wt_rna_expression
+  - wt_protein_expression
+  - genotype_interaction
+  - genetic_interaction
+  - physical_interaction

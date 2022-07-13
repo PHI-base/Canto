@@ -55,7 +55,14 @@ sub _content
   }
 }
 
-sub _parse_results
+=head2 parse_results
+
+ Usage   : my @res = Canto::UniProt::UniProtUtil::parse_results($xml);
+ Function: Parse UniProt XML entries and return an array of the results
+
+=cut
+
+sub parse_results
 {
   my $xml = shift;
 
@@ -67,25 +74,61 @@ sub _parse_results
   my @ret = ();
 
   for my $entry (@{$res_hash->{entry}}) {
-    my $name = _content($entry->{gene}->[0]->{name}->[0]);
+    my $full_name_parent_element;
+    if ($entry->{protein}->[0]->{recommendedName}) {
+      $full_name_parent_element = $entry->{protein}->[0]->{recommendedName};
+    } else {
+      $full_name_parent_element = $entry->{protein}->[0]->{submittedName};
+    }
 
-    my $full_name =
-      _content($entry->{protein}->[0]->{recommendedName}->[0]->{fullName}->[0]);
+    my $full_name = _content($full_name_parent_element->[0]->{fullName}->[0]);
 
     my @synonyms = ();
 
+    my $name;
 
-    push @synonyms, map { _content($_) } @{$entry->{gene}->[0]->{name}};
-    my $gene_name = shift @synonyms;
+    if (defined $entry->{gene}->[0]->{name}) {
+      for my $synonym (@{$entry->{gene}->[0]->{name}}) {
+        my $synonym_content = _content($synonym);
+
+        if ($synonym->{type} eq 'primary') {
+          $name = $synonym_content;
+        } else {
+          push @synonyms, $synonym_content;
+        }
+      }
+
+      if (!defined $name) {
+        for my $synonym (@{$entry->{gene}->[0]->{name}}) {
+          my $synonym_content = _content($synonym);
+
+          if ($synonym->{type} eq 'ORF') {
+            $name = $synonym_content;
+            last;
+          }
+        }
+      }
+    }
+
+    if (defined $name) {
+      @synonyms = grep { $_ ne $name } @synonyms;
+    }
+
+    if (!defined $name) {
+      $name = _content($entry->{name}->[0]);
+    }
 
     my $accession = _content($entry->{accession}->[0]);
 
     my $organism_full_name = 'Unknown unknown';
+    my $organism_common_name = undef;
 
     for my $org_details (@{$entry->{organism}->[0]->{name}}) {
       if ($org_details->{type} eq 'scientific') {
         $organism_full_name = _content($org_details);
-        last;
+      }
+      if ($org_details->{type} eq 'common') {
+        $organism_common_name = _content($org_details);
       }
     }
 
@@ -103,6 +146,7 @@ sub _parse_results
       product => $full_name,
       synonyms => [@synonyms],
       organism_full_name => $organism_full_name,
+      organism_common_name => $organism_common_name,
       organism_taxonid => $taxonid,
     };
   }
@@ -112,9 +156,23 @@ sub _parse_results
 
 =head2 retrieve_entries
 
- Usage   : my $xml =
+ Usage   : my @results =
              Canto::UniProt::UniProtUtil::retrieve_entries($config, [@ids]);
- Function: Return the XML entries from UniProt for the given ids
+ Function: Return a list of the details from matching entries in this format:
+           [ {
+                primary_name => "..."
+                primary_identifier => "...",  # the UniProt accession
+                product => "..."
+                synonyms => ["synonym1", ...],
+                organism_full_name => "Genus species"
+                organism_common_name => "..."
+                organism_taxonid => 1234,
+             },
+             {
+                ...
+             },
+             ...
+           ]
  Args    : $config - the Canto::Config object
 
 =cut
@@ -129,18 +187,10 @@ sub retrieve_entries
 
   # copied from http://www.uniprot.org/faq/28#batch_retrieval_of_entries
   my $agent = LWP::UserAgent->new;
-  push @{$agent->requests_redirectable}, 'POST';
 
-  my $response = $agent->post($batch_service_url,
-                              [
-                                'file' => [
-                                  undef, 'upload.xml',
-                                  Content_Type => 'text/plain',
-                                  Content => "@identifiers"
-                               ],
-                               'format' => 'xml',
-                               ],
-                               'Content_Type' => 'form-data');
+  my $url = $batch_service_url . join (' OR ', map { "accession:$_" } @identifiers);
+
+  my $response = $agent->get($url, 'Accept-Encoding' => 'gzip, x-gzip, deflate');
 
   while (my $wait = $response->header('Retry-After')) {
     print STDERR "Waiting ($wait)...\n";
@@ -149,8 +199,8 @@ sub retrieve_entries
   }
 
   if ($response->is_success) {
-    my $xml = $response->content();
-    return _parse_results($xml);
+    my $xml = $response->decoded_content();
+    return parse_results($xml);
   } else {
     if ($response->status_line() =~ /^400 /) {
       # illegal identifier like "cdc11"

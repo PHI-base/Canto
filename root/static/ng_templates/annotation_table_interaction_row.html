@@ -1,31 +1,61 @@
-<tr ng-class="{ 'curs-row-checked' : sessionState == 'APPROVAL_IN_PROGRESS' && checked == 'yes' }">
+<tr ng-class="{ 'curs-row-checked' : sessionState == 'APPROVAL_IN_PROGRESS' && checked == 'yes' || showCheckboxes && checkboxChecked }"
+    ng-click="showCheckboxes && checkboxClick()">
+  <td class="curs-annotation-table-checkbox" ng-if="showCheckboxes">
+    <input type="checkbox" name="selectAnnotation"
+           ng-checked="checkboxChecked"/>
+  </td>
   <td>
-    <a ng-if="annotation.status === 'new'" href="{{curs_root_uri + '/feature/gene/view/' + annotation.feature_id + (read_only_curs ? '/ro' : '')}}">
-      {{annotation.gene_display_name}}
+    <a ng-if="annotation.status === 'new'"
+       href="{{curs_root_uri + '/feature/' + interactionFeatureType + '/view/' + annotation.feature_a_id + (read_only_curs ? '/ro' : '')}}">
+      <span ng-class="{ 'curs-highlight-feature' : annotation.feature_a_id == highlightFeatureId }"
+            ng-bind-html="annotation.feature_a_display_name | breakAtSpaces | toTrusted"></span>
     </a>
     <span ng-if="annotation.status === 'existing'">
-      {{annotation.gene_display_name}}
+      <span ng-bind-html="annotation.feature_a_display_name | breakAtSpaces | toTrusted"></span>
     </span>
   </td>
   <td ng-if="multiOrganismMode">
-    {{annotation.gene_taxonid}}
+    {{annotation.feature_a_taxonid}}
   </td>
-  <td>
+  <td ng-if="!data.hideColumns.evidence_code">
     {{displayEvidence}}
   </td>
+  <td ng-if="annotationType.can_have_conditions && !data.hideColumns.conditions">
+    <span ng-bind-html="annotation.conditionsString | toTrusted"></span>
+  </td>
   <td>
-    <a ng-if="annotation.status === 'new'" href="{{curs_root_uri + '/feature/gene/view/' + annotation.interacting_gene_id + (read_only_curs ? '/ro' : '')}}">
-      {{annotation.interacting_gene_display_name}}
+    <a ng-if="annotation.status === 'new'"
+       href="{{curs_root_uri + '/feature/' + interactionFeatureType + '/view/' + annotation.feature_b_id + (read_only_curs ? '/ro' : '')}}">
+      <span ng-class="{ 'curs-highlight-feature' : annotation.feature_b_id == highlightFeatureId }"
+            ng-bind-html="annotation.feature_b_display_name | breakAtSpaces | toTrusted"></span>
     </a>
     <span ng-if="annotation.status === 'existing'">
-      {{annotation.interacting_gene_display_name}}
+      <span ng-bind-html="annotation.feature_b_display_name | breakAtSpaces | toTrusted"></span>
     </span>
   </td>
   <td ng-if="multiOrganismMode">
-    {{annotation.interacting_gene_taxonid}}
+    {{annotation.feature_b_taxonid}}
+  </td>
+  <td ng-if="showInteractionTermColumns && !data.hideColumns.term_ontid"
+      ng-class="{ 'term-warning': annotation.is_obsolete_term }">
+    {{annotation.term_ontid}}
+  </td>
+  <td ng-if="showInteractionTermColumns"
+      ng-class="{ 'term-warning': annotation.is_obsolete_term }">
+    {{annotation.term_name}}
+  </td>
+  <td ng-if="!data.hideColumns.extension">
+    <extension-display extension="annotation.extension" hide-relation-names="hideRelationNames">
+    </extension-display>
+  </td>
+  <td ng-if="!data.hideColumns.qualifiers">
+    {{annotation.qualifiersString}}
   </td>
   <td ng-if="!data.hideColumns.submitter_comment">
     {{annotation.submitter_comment}}
+  </td>
+  <td ng-if="!data.hideColumns.figure">
+    {{annotation.figure}}
   </td>
   <td ng-if="!data.hideColumns.curator">
     {{annotation.curator}}
@@ -35,12 +65,15 @@
       <div>
         <a ng-click="edit()">Edit</a>
       </div>
+      <div ng-if="showTransferLink">
+        <a title="{{'Copy this annotation to other ' + annotationType.feature_type + 's'}}"
+           ng-click="transferAnnotation()">Transfer</a>
+      </div>
       <div>
         <a ng-click="duplicate()">Copy and edit</a>
       </div>
       <div>
-        <a confirm="Are you sure you want to delete this annotation?"
-           ng-click="deleteAnnotation()">Delete</a>
+        <a title="Delete this annotation" ng-click="confirmDelete()">Delete</a>
       </div>
       <div ng-if="sessionState == 'APPROVAL_IN_PROGRESS'">
         <a ng-if="checked == 'no'" href="#" ng-click="setChecked($event)">Checked</a>

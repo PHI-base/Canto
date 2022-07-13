@@ -1,0 +1,70 @@
+<div class="curs-genes-and-orgs-edit">
+  <div class="curs-box-title">{{ tableTitle }}</div>
+  <div ng-show="organisms().length == 0">
+    <p>No genes have been added.</p>
+  </div>
+  <div ng-show="organisms().length > 0" class="curs-box-body">
+    <table class="organism-table">
+      <thead>
+        <tr>
+          <th>Organism</th>
+          <th class="curs-genes-and-orgs-edit-gene" colspan="3">Gene</th>
+          <th ng-if="!readOnlyMode">&nbsp;</th>
+        </tr>
+        <tr>
+            <th></th>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Product</th>
+            <th ng-if="!readOnlyMode">&nbsp;</th>
+        </tr>
+      </thead>
+      <tbody ng-repeat="o in organisms() track by o.taxonid">
+        <tr>
+          <td rowspan="{{ o.genes.length === 0 ? 1 : o.genes.length }}">
+            <i>{{ o.scientific_name }}</i>
+          </td>
+          <td ng-if="o.genes.length > 0">{{ firstGene(o.genes).systematic_identifier }}</td>
+          <td ng-if="o.genes.length > 0">{{ firstGene(o.genes).name }}</td>
+          <td ng-if="o.genes.length > 0">{{ firstGene(o.genes).product }}</td>
+          <td ng-if="!readOnlyMode && o.genes.length > 0" style="vertical-align: top;"><button
+            ng-disabled="firstGene(o.genes).disabled"
+            ng-class="{'btn-danger': (!firstGene(o.genes).disabled)}"
+            title="{{ firstGene(o.genes).title }}"
+            ng-click="removeGene(firstGene(o.genes).gene_id)">
+              <span ng-class="{'gene-button-delete-text-disabled': firstGene(o.genes).disabled}">X</span></button>
+          </td>
+          <td ng-if="o.genes.length == 0" class="organism-table__no-gene-notice" colspan="3">(No genes for this organism)</td>
+          <td ng-if="!readOnlyMode && o.genes.length == 0">
+            <button ng-if="canRemoveHost(o)"
+              title="Remove host"
+              class="btn-danger"
+              ng-click="removeHost(o.taxonid)">X</button>
+            <button ng-if="!canRemoveHost(o)"
+              disabled="disabled"
+              title="Host can't be removed because it is used in a metagenotype">
+              <span class="gene-button-delete-text-disabled">X</span></button>
+          </td>
+        </tr>
+        <tr ng-if="o.genes.length > 0"
+          ng-repeat="g in otherGenes(o.genes) track by g.systematic_identifier">
+          <td>{{ g.systematic_identifier }}</td>
+          <td>{{ g.name }}</td>
+          <td>{{ g.product }}</td>
+          <td ng-if="!readOnlyMode" style="vertical-align: middle;"><button
+            ng-disabled="g.disabled"
+            ng-class="{'btn-danger': (!g.disabled)}"
+            title="{{ g.title }}"
+            ng-click="removeGene(g.gene_id)">
+            <span ng-class="{'gene-button-delete-text-disabled': g.disabled}">X</span></button>
+          </td>
+        </tr>
+        <tr ng-if="data.strainsMode">
+          <td colspan="{{ readOnlyMode ? 4 : 5 }}">
+            <strain-picker taxon-id="{{ o.taxonid }}"></strain-picker>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 74;
+use Test::More tests => 90;
 use Test::Deep;
 use JSON;
 
@@ -9,8 +9,13 @@ use Capture::Tiny 'capture_stderr';
 use Canto::TestUtil;
 use Canto::Track;
 use Canto::Curs::ServiceUtils;
+use Canto::Track::OrganismLookup;
+
+use Clone::PP qw(clone);
+
 
 my $test_util = Canto::TestUtil->new();
+my $track_schema = $test_util->track_schema();
 
 $test_util->init_test('curs_annotations_2');
 
@@ -34,19 +39,43 @@ cmp_deeply($res,
               'identifier' => 'aaaa0007-genotype-test-1',
               'name' => 'SPCC63.05delta ssm4KE',
               background => 'h+',
+              comment => undef,
               display_name => 'SPCC63.05delta ssm4KE',
               genotype_id => 1,
-              allele_string => 'ssm4delta SPCC63.05delta',
+              allele_string => 'SPCC63.05delta ssm4delta',
               annotation_count => 1,
+              metagenotype_count_by_type => {
+                interaction => 1,
+              },
+              strain_name => undef,
+              'organism' => {
+                              scientific_name => 'Schizosaccharomyces pombe',
+                              'taxonid' => '4896',
+                              'pathogen_or_host' => 'unknown',
+                              'full_name' => 'Schizosaccharomyces pombe',
+                              'common_name' => 'fission yeast'
+                            },
             },
             {
               'identifier' => 'aaaa0007-genotype-test-2',
               'name' => undef,
               background => undef,
+              comment => undef,
               display_name => 'ssm4-D4(del_100-200)[Knockdown]',
               genotype_id => 2,
               allele_string => 'ssm4-D4(del_100-200)[Knockdown]',
               annotation_count => 1,
+              metagenotype_count_by_type => {
+                interaction => 1,
+              },
+              strain_name => undef,
+              'organism' => {
+                              scientific_name => 'Schizosaccharomyces pombe',
+                              'taxonid' => '4896',
+                              'pathogen_or_host' => 'unknown',
+                              'full_name' => 'Schizosaccharomyces pombe',
+                              'common_name' => 'fission yeast'
+                            },
             }
           ]);
 
@@ -71,10 +100,22 @@ cmp_deeply($res,
               identifier => 'aaaa0007-genotype-test-1',
               name => 'SPCC63.05delta ssm4KE',
               background => 'h+',
+              comment => undef,
               display_name => 'SPCC63.05delta ssm4KE',
               genotype_id => 1,
-              allele_string => 'ssm4delta SPCC63.05delta',
+              allele_string => 'SPCC63.05delta ssm4delta',
               annotation_count => 1,
+              metagenotype_count_by_type => {
+                interaction => 1,
+              },
+              strain_name => undef,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'fission yeast'
+              },
             },
           ]);
 
@@ -98,6 +139,13 @@ cmp_deeply($res,
               'display_name' => 'cdc11-33 mot1-a1',
               'allele_identifiers' => ['SPCC1739.11c:allele-1','SPBC1826.01c:allele-1'],
               annotation_count => 0,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'pombe'
+              },
             },
           ]);
 
@@ -117,20 +165,44 @@ cmp_deeply($res,
             {
               'name' => 'SPCC63.05delta ssm4KE',
               background => 'h+',
-              'allele_string' => 'ssm4delta SPCC63.05delta',
+              comment => undef,
+              'allele_string' => 'SPCC63.05delta ssm4delta',
               'genotype_id' => 1,
               'display_name' => 'SPCC63.05delta ssm4KE',
               'identifier' => 'aaaa0007-genotype-test-1',
               annotation_count => 1,
+              metagenotype_count_by_type => {
+                interaction => 1,
+              },
+              strain_name => undef,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'fission yeast'
+              },
             },
             {
               'name' => undef,
               background => undef,
+              comment => undef,
               'allele_string' => 'ssm4-D4(del_100-200)[Knockdown]',
               'display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
               'genotype_id' => 2,
               'identifier' => 'aaaa0007-genotype-test-2',
               annotation_count => 1,
+              metagenotype_count_by_type => {
+                interaction => 1,
+              },
+              strain_name => undef,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'fission yeast'
+              },
             },
             {
               'name' => 'cdc11-33 ssm4delta',
@@ -142,6 +214,13 @@ cmp_deeply($res,
                                         'SPAC27D7.13c:allele-1'
                                       ],
               annotation_count => 1,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'pombe'
+              },
             }
           ]);
 
@@ -170,6 +249,13 @@ cmp_deeply($res,
               'identifier' => 'aaaa0007-test-genotype-3',
               'display_name' => 'cdc11-33 ssm4delta',
               annotation_count => 1,
+              organism => {
+                scientific_name => 'Schizosaccharomyces pombe',
+                taxonid => '4896',
+                pathogen_or_host => 'unknown',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'pombe'
+              },
             }
           ]);
 
@@ -179,6 +265,12 @@ cmp_deeply($res,
 
 $res = $service_utils->list_for_service('gene');
 
+my $expected_organism = {
+  full_name => 'Schizosaccharomyces pombe',
+  taxonid => 4896,
+  pathogen_or_host => 'unknown',
+};
+
 cmp_deeply($res,
            [
             {
@@ -186,24 +278,32 @@ cmp_deeply($res,
               'primary_identifier' => 'SPBC14F5.07',
               display_name => 'doa10',
                gene_id => 3,
+               feature_id => 3,
+              organism => $expected_organism,
             },
             {
               'primary_identifier' => 'SPBC1826.01c',
               'primary_name' => 'mot1',
               display_name => 'mot1',
                gene_id => 1,
+              feature_id => 1,
+              organism => $expected_organism,
             },
             {
               'primary_name' => 'ssm4',
               'primary_identifier' => 'SPAC27D7.13c',
               display_name => 'ssm4',
                gene_id => 2,
+              feature_id => 2,
+              organism => $expected_organism,
             },
             {
               'primary_identifier' => 'SPCC63.05',
               'primary_name' => undef,
               display_name => 'SPCC63.05',
                gene_id => 4,
+              feature_id => 4,
+              organism => $expected_organism,
             },
           ]);
 
@@ -289,7 +389,7 @@ is ($res->{status}, 'success');
 $first_genotype_annotation = $first_genotype->annotations()->first();
 my @res_conditions = @{$first_genotype_annotation->data()->{conditions}};
 
-cmp_deeply(\@res_conditions, ['PECO:0000006', 'some free text cond']);
+cmp_deeply(\@res_conditions, ['FYECO:0000006', 'some free text cond']);
 
 
 # test illegal evidence_code
@@ -389,7 +489,7 @@ is ($res->{annotation}->{term_ontid}, 'GO:0022857');
 is ($res->{annotation}->{term_name}, 'transmembrane transporter activity');
 is ($res->{annotation}->{evidence_code}, 'IDA');
 is ($res->{annotation}->{submitter_comment}, undef);
-is ($res->{annotation}->{curator}, 'Some Testperson <some.testperson@pombase.org>');
+is ($res->{annotation}->{curator}, 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>');
 
 is ($c2d7_gene->direct_annotations()->count(), 2);
 
@@ -406,7 +506,7 @@ $stderr = capture_stderr {
   });
 };
 is ($res->{status}, 'error');
-my $lack_of_info_message = 'No feature_id passed to annotation creation service';
+my $lack_of_info_message = 'No feature(s) passed to annotation creation service';
 is ($res->{message}, $lack_of_info_message);
 
 
@@ -422,14 +522,14 @@ is ($curs_schema->resultset('Annotation')->search({ annotation_id => $new_annota
 
 # test interaction annotation services
 
-my $genetic_interaction_annotation =
-  $curs_schema->resultset('Annotation')->find({ type => 'genetic_interaction',
-                                                data => { -like => '%Far Western%' } });
+my $genotype_interaction_annotation =
+  $curs_schema->resultset('Annotation')->find({ type => 'genotype_interaction',
+                                                data => { -like => '%Synthetic Haploinsufficiency%' } });
 
 
 # test illegal field type
 $stderr = capture_stderr {
-  $res = $service_utils->change_annotation($genetic_interaction_annotation->annotation_id(),
+  $res = $service_utils->change_annotation($genotype_interaction_annotation->annotation_id(),
                                            'new',
                                            {
                                              key => $curs_key,
@@ -441,38 +541,62 @@ my $illegal_field_type_message = 'No such annotation field type: illegal';
 is ($res->{message}, $illegal_field_type_message);
 
 
+my $metagenotype_rs = $curs_schema->resultset('Metagenotype')->search();
+
+my $test_metagenotype = $metagenotype_rs->first();
+
 # test editing
-$res = $service_utils->change_annotation($genetic_interaction_annotation->annotation_id(),
+$res = $service_utils->change_annotation($genotype_interaction_annotation->annotation_id(),
                                          'new',
                                          {
                                            key => $curs_key,
-                                           interacting_gene_id => 3,
+                                           feature_id => $test_metagenotype->metagenotype_id(),
+                                           feature_type => 'metagenotype',
                                          });
 
 is ($res->{status}, 'success');
 cmp_deeply ($res->{annotation},
             {
               'publication_uniquename' => 'PMID:19756689',
-              'interacting_gene_taxonid' => 4896,
               'score' => '',
-              'annotation_id' => $genetic_interaction_annotation->annotation_id(),
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
-              'feature_id' => 4,
-              'interacting_gene_identifier' => 'SPBC14F5.07',
-              'interacting_gene_display_name' => 'doa10',
-              'gene_display_name' => 'SPCC63.05',
-              'gene_id' => 4,
-              'feature_display_name' => 'SPCC63.05',
-              'gene_taxonid' => 4896,
+              'annotation_id' => $genotype_interaction_annotation->annotation_id(),
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
+              'genotype_a_display_name' => 'SPCC63.05delta ssm4KE',
+              'genotype_a_id' => 1,
+              'genotype_a_taxonid' => 4896,
+              'genotype_a_gene_ids' => [2, 4],
+              'feature_a_display_name' => 'SPCC63.05delta ssm4KE',
+              'feature_a_id' => 1,
+              'feature_a_taxonid' => 4896,
+              'genotype_b_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
+              'genotype_b_id' => 2,
+              'genotype_b_taxonid' => 4896,
+              'feature_b_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
+              'feature_b_id' => 2,
+              'feature_b_taxonid' => 4896,
+              'genotype_b_gene_ids' => [2],
+              'organism' => {
+                taxonid => '4896',
+                scientific_name => 'Schizosaccharomyces pombe',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'fission yeast',
+                pathogen_or_host => 'unknown',
+              },
+              'term_ontid' => 'FYPO:0000114',
+              'term_name' => 'cellular process phenotype',
+              'extension' => [],
+              'conditions' => [{
+                                'name' => 'glucose rich medium',
+                                'term_id' => 'FYECO:0000137'
+                              }],
               'is_inferred_annotation' => 0,
-              'gene_identifier' => 'SPCC63.05',
-              'evidence_code' => 'Far Western',
-              'interacting_gene_id' => 3,
+              'evidence_code' => 'Synthetic Haploinsufficiency',
               'status' => 'new',
               'completed' => 1,
               'submitter_comment' => '',
-              'phenotypes' => '',
-              'annotation_type' => 'genetic_interaction',
+              'figure' => '',
+              'is_obsolete_term' => 0,
+              'annotation_type' => 'genotype_interaction',
               'annotation_type_display_name' => 'genetic interaction',
               'checked' => 'no',
             }
@@ -482,9 +606,20 @@ cmp_deeply ($res->{annotation},
 # test condition list service
 my $cond_res = $service_utils->list_for_service('condition');
 
-cmp_deeply($cond_res, [ { term_id => 'PECO:0000006', name => 'low temperature' },
-                        { name => 'some free text cond' } ]);
-
+cmp_deeply($cond_res,
+           [
+             {
+               'name' => 'glucose rich medium',
+               'term_id' => 'FYECO:0000137'
+             },
+             {
+               'term_id' => 'FYECO:0000006',
+               'name' => 'low temperature'
+             },
+             {
+               'name' => 'some free text cond'
+             }
+           ]);
 
 # test annotation list service
 my $annotation_res = $service_utils->list_for_service('annotation');
@@ -502,6 +637,14 @@ sub clean_results
 
 clean_results($annotation_res);
 
+my $annotation_expected_organism = {
+  full_name => 'Schizosaccharomyces pombe',
+  common_name => 'fission yeast',
+  pathogen_or_host => 'unknown',
+  taxonid => '4896',
+  scientific_name => 'Schizosaccharomyces pombe'
+};
+
 cmp_deeply($annotation_res,
          [
             {
@@ -510,24 +653,29 @@ cmp_deeply($annotation_res,
                 [
                   {
                     relation => 'exists_during',
+                    rangeType => 'Ontology',
                     rangeValue => 'GO:0051329',
                   },
                   {
                     relation => 'has_substrate',
+                    rangeType => 'Gene',
                     rangeValue => 'PomBase:SPBC1105.11c',
                   },
                   {
                     relation => 'requires_feature',
+                    rangeType => 'Gene',
                     rangeValue => 'Pfam:PF00564',
                   },
                 ],
                 [
                   {
                     relation => 'exists_during',
+                    rangeType => 'Ontology',
                     rangeValue => 'GO:0051329',
                   },
                   {
                     relation => 'has_substrate',
+                    rangeType => 'Gene',
                     rangeValue => 'PomBase:SPBC1105.11c',
                   }
                 ],
@@ -539,7 +687,7 @@ cmp_deeply($annotation_res,
               'feature_id' => 3,
               'qualifiers' => [],
               'with_or_from_identifier' => 'SPAC27D7.13c',
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'needs_with' => '1',
               'gene_name_or_identifier' => 'doa10',
               'is_obsolete_term' => 0,
@@ -556,10 +704,12 @@ cmp_deeply($annotation_res,
               'creation_date_short' => '20100102',
               'completed' => 1,
               'taxonid' => 4896,
+              'organism' => $annotation_expected_organism,
               'is_not' => JSON::false,
               'creation_date' => '2010-01-02',
               'evidence_code' => 'IPI',
               'submitter_comment' => 'a short comment',
+              'figure' => undef,
               'with_or_from_display_name' => 'ssm4',
               'gene_name' => 'doa10',
               'gene_identifier' => 'SPBC14F5.07',
@@ -573,6 +723,7 @@ cmp_deeply($annotation_res,
               'gene_name' => 'doa10',
               'with_or_from_display_name' => undef,
               'submitter_comment' => undef,
+              'figure' => undef,
               'feature_type' => 'gene',
               'feature_display_name' => 'doa10',
               'term_ontid' => 'GO:0022857',
@@ -581,6 +732,7 @@ cmp_deeply($annotation_res,
               'term_name' => 'transmembrane transporter activity',
               'is_not' => JSON::false,
               'taxonid' => 4896,
+              'organism' => $annotation_expected_organism,
               'creation_date_short' => '20100102',
               'completed' => 1,
               'annotation_type_display_name' => 'GO molecular function',
@@ -597,13 +749,14 @@ cmp_deeply($annotation_res,
               'annotation_type' => 'molecular_function',
               'status' => 'new',
               'annotation_id' => 3,
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'with_or_from_identifier' => undef,
               'with_gene_id' => undef,
               'qualifiers' => [],
             },
             {
               'submitter_comment' => undef,
+              'figure' => undef,
               'gene_name' => 'ssm4',
               'with_or_from_display_name' => undef,
               'with_gene_id' => undef,
@@ -612,6 +765,7 @@ cmp_deeply($annotation_res,
               'evidence_code' => 'IMP',
               'annotation_type_display_name' => 'GO biological process',
               'taxonid' => 4896,
+              'organism' => $annotation_expected_organism,
               'completed' => 1,
               'creation_date_short' => '20100102',
               'is_not' => JSON::false,
@@ -629,7 +783,7 @@ cmp_deeply($annotation_res,
               'needs_with' => undef,
               'qualifiers' => [],
               'with_or_from_identifier' => undef,
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'extension' => [],
               'annotation_type' => 'biological_process',
               'gene_product' => 'p150-Glued',
@@ -670,6 +824,13 @@ cmp_deeply($annotation_res,
                     }
                   ]
                 ],
+               'organism' => {
+                 'pathogen_or_host' => 'unknown',
+                 'full_name' => 'Schizosaccharomyces pombe',
+                 'taxonid' => '4896',
+                 'common_name' => 'fission yeast',
+                 'scientific_name' => 'Schizosaccharomyces pombe',
+               },
             },
             {
               'evidence_code' => 'IMP',
@@ -695,6 +856,13 @@ cmp_deeply($annotation_res,
               'with_gene_id' => undef,
               'taxonid' => '4896',
               'extension' => undef,
+              'organism' => {
+                'pathogen_or_host' => 'unknown',
+                'full_name' => 'Schizosaccharomyces pombe',
+                'taxonid' => '4896',
+                'common_name' => 'fission yeast',
+                'scientific_name' => 'Schizosaccharomyces pombe',
+              },
             },
             {
               'term_ontid' => 'FYPO:0000133',
@@ -712,11 +880,12 @@ cmp_deeply($annotation_res,
               'with_or_from_display_name' => undef,
               'genotype_display_name' => 'SPCC63.05delta ssm4KE',
               'submitter_comment' => 'new service comment',
+              'figure' => undef,
               'with_gene_id' => undef,
               'conditions' => [
                                 {
                                   'name' => 'low temperature',
-                                  'term_id' => 'PECO:0000006'
+                                  'term_id' => 'FYECO:0000006'
                                 },
                                 {
                                   'name' => 'some free text cond'
@@ -729,7 +898,7 @@ cmp_deeply($annotation_res,
               'annotation_type' => 'phenotype',
               'status' => 'new',
               'qualifiers' => [],
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'with_or_from_identifier' => undef,
               'needs_with' => undef,
               'genotype_name' => 'SPCC63.05delta ssm4KE',
@@ -738,6 +907,14 @@ cmp_deeply($annotation_res,
               'term_suggestion_definition' => undef,
               'is_obsolete_term' => 0,
               'genotype_identifier' => 'aaaa0007-genotype-test-1',
+              'organism' => {
+                'pathogen_or_host' => 'unknown',
+                'common_name' => 'fission yeast',
+                'scientific_name' => 'Schizosaccharomyces pombe',
+                'full_name' => 'Schizosaccharomyces pombe',
+                'taxonid' => '4896',
+              },
+              'strain_name' => undef,
               'annotation_type_abbreviation' => '',
               'alleles' => [
                 {
@@ -748,8 +925,10 @@ cmp_deeply($annotation_res,
                   'name' => 'ssm4delta',
                   'description' => 'deletion',
                   'type' => 'deletion',
+                  'display_name' => 'ssm4delta',
                   'long_display_name' => 'ssm4delta',
                   'gene_display_name' => 'ssm4',
+                  'synonyms' => [],
                 },
                 {
                   'description' => 'deletion',
@@ -759,8 +938,10 @@ cmp_deeply($annotation_res,
                   'allele_id' => 5,
                   'name' => 'SPCC63.05delta',
                   'primary_identifier' => 'SPCC63.05:aaaa0007-1',
+                  'display_name' => 'SPCC63.05delta',
                   'long_display_name' => 'SPCC63.05delta',
                   'gene_display_name' => 'SPCC63.05',
+                  'synonyms' => [],
                 }
               ],
             },
@@ -773,6 +954,7 @@ cmp_deeply($annotation_res,
               'with_or_from_display_name' => undef,
               'genotype_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
               'submitter_comment' => undef,
+              'figure' => undef,
               'feature_type' => 'genotype',
               'feature_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
               'term_ontid' => 'FYPO:0000017',
@@ -784,6 +966,14 @@ cmp_deeply($annotation_res,
               'annotation_type_display_name' => 'phenotype',
               'needs_with' => undef,
               'genotype_identifier' => 'aaaa0007-genotype-test-2',
+              'organism' => {
+                'pathogen_or_host' => 'unknown',
+                'common_name' => 'fission yeast',
+                'scientific_name' => 'Schizosaccharomyces pombe',
+                'full_name' => 'Schizosaccharomyces pombe',
+                'taxonid' => '4896',
+              },
+              'strain_name' => undef,
               'annotation_type_abbreviation' => '',
               'genotype_name' => undef,
               'genotype_background' => undef,
@@ -796,7 +986,7 @@ cmp_deeply($annotation_res,
               'annotation_type' => 'phenotype',
               'extension' => [],
               'status' => 'new',
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'with_or_from_identifier' => undef,
               'qualifiers' => [],
               'alleles' => [
@@ -808,90 +998,118 @@ cmp_deeply($annotation_res,
                   'primary_identifier' => 'SPAC27D7.13c:aaaa0007-3',
                   'allele_id' => 3,
                   'type' => 'partial deletion, nucleotide',
-                  'long_display_name' => 'ssm4delta',
+                  'display_name' => 'ssm4-D4(del_100-200)',
                   'long_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
                   'gene_display_name' => 'ssm4',
+                  'synonyms' => [{ edit_status => 'new', synonym => 'ssm4-c1' }],
                 }
               ],
             },
             $cycloheximide_annotation_res,
             $post_translational_modification_res,
             {
-              'interacting_gene_display_name' => 'doa10',
+              'genotype_a_display_name' => 'SPCC63.05delta ssm4KE',
+              'genotype_a_id' => 1,
+              'genotype_a_taxonid' => 4896,
+              'feature_a_display_name' => 'SPCC63.05delta ssm4KE',
+              'feature_a_id' => 1,
+              'feature_a_taxonid' => 4896,
+              'genotype_a_gene_ids' => [2, 4],
+              'genotype_b_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
+              'genotype_b_id' => 2,
+              'genotype_b_taxonid' => 4896,
+              'feature_b_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
+              'feature_b_id' => 2,
+              'feature_b_taxonid' => 4896,
+              'genotype_b_gene_ids' => [2],
+              'organism' => {
+                taxonid => '4896',
+                scientific_name => 'Schizosaccharomyces pombe',
+                full_name => 'Schizosaccharomyces pombe',
+                common_name => 'fission yeast',
+                pathogen_or_host => 'unknown',
+              },
+              'term_ontid' => 'FYPO:0000114',
+              'term_name' => 'cellular process phenotype',
+              'extension' => [],
+              'conditions' => [{'name' => 'glucose rich medium', 'term_id' => 'FYECO:0000137'}],
               'evidence_code' => 'Synthetic Haploinsufficiency',
-              'interacting_gene_taxonid' => 4896,
-              'gene_taxonid' => 4896,
               'submitter_comment' => '',
+              'figure' => '',
               'is_inferred_annotation' => 0,
-              'gene_identifier' => 'SPCC63.05',
-              'gene_id' => 4,
-              'gene_display_name' => 'SPCC63.05',
               'publication_uniquename' => 'PMID:19756689',
-              'feature_id' => 4,
               'score' => '',
               'annotation_id' => 4,
-              'feature_display_name' => 'SPCC63.05',
               'status' => 'new',
-              'annotation_type' => 'genetic_interaction',
+              'is_obsolete_term' => 0,
+              'annotation_type' => 'genotype_interaction',
               'annotation_type_display_name' => 'genetic interaction',
-              'phenotypes' => '',
-              'interacting_gene_id' => 3,
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
-              'interacting_gene_identifier' => 'SPBC14F5.07',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
               'completed' => 1
-            },
-            {
-              'phenotypes' => '',
-              'completed' => 1,
-              'interacting_gene_identifier' => 'SPBC14F5.07',
-              'curator' => 'Some Testperson <some.testperson@pombase.org>',
-              'interacting_gene_id' => 3,
-              'gene_display_name' => 'SPCC63.05',
-              'gene_id' => 4,
-              'feature_display_name' => 'SPCC63.05',
-              'status' => 'new',
-              'annotation_type' => 'genetic_interaction',
-              'annotation_type_display_name' => 'genetic interaction',
-              'score' => '',
-              'annotation_id' => 5,
-              'feature_id' => 4,
-              'publication_uniquename' => 'PMID:19756689',
-              'gene_taxonid' => 4896,
-              'submitter_comment' => '',
-              'interacting_gene_taxonid' => 4896,
-              'gene_identifier' => 'SPCC63.05',
-              'is_inferred_annotation' => 0,
-              'interacting_gene_display_name' => 'doa10',
-              'evidence_code' => 'Far Western'
             },
             {
               'evidence_code' => 'Phenotypic Enhancement',
               'publication_uniquename' => 'PMID:19756689',
               'status' => 'existing',
               'gene_display_name' => 'ste20',
-              'interacting_gene_display_name' => 'cdc11',
               'gene_identifier' => 'SPBC12C2.02c',
+              'feature_a_display_name' => 'ste20',
+              'interacting_gene_display_name' => 'cdc11',
               'interacting_gene_identifier' => 'SPCC1739.11c',
               'interacting_gene_taxonid' => '4896',
               'interacting_gene_id' => undef,
+              'feature_b_display_name' => 'cdc11',
               'annotation_type' => 'genetic_interaction',
               'gene_taxonid' => '4896',
               'gene_id' => undef,
             },
             {
-              'interacting_gene_display_name' => 'sfh1',
               'gene_display_name' => 'ste20',
               'status' => 'existing',
               'evidence_code' => undef,
               'publication_uniquename' => 'PMID:19756689',
               'gene_taxonid' => '4896',
               'gene_id' => undef,
+              'feature_a_display_name' => 'ste20',
+              'interacting_gene_display_name' => 'sfh1',
               'interacting_gene_taxonid' => '4896',
               'interacting_gene_identifier' => 'SPCC16A11.14',
               'interacting_gene_id' => undef,
+              'feature_b_display_name' => 'sfh1',
               'annotation_type' => 'genetic_interaction',
               'gene_identifier' => 'SPBC12C2.02c'
             },
+            {
+              'submitter_comment' => '',
+              'figure' => '',
+              'interacting_gene_id' => 2,
+              'completed' => 1,
+              'gene_display_name' => 'SPCC63.05',
+              'gene_id' => 4,
+              'gene_identifier' => 'SPCC63.05',
+              'annotation_id' => 5,
+              'feature_b_taxonid' => '4896',
+              'interacting_gene_taxonid' => '4896',
+              'feature_id' => 4,
+              'annotation_type' => 'physical_interaction',
+              'score' => '',
+              'evidence_code' => 'Far Western',
+              'feature_b_display_name' => 'ssm4',
+              'is_inferred_annotation' => 0,
+              'feature_a_id' => 4,
+              'publication_uniquename' => 'PMID:19756689',
+              'annotation_type_display_name' => 'physical interaction',
+              'curator' => 'Some Testperson <some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org>',
+              'feature_a_taxonid' => '4896',
+              'gene_taxonid' => '4896',
+              'feature_display_name' => 'SPCC63.05',
+              'interacting_gene_identifier' => 'SPAC27D7.13c',
+              'status' => 'new',
+              'feature_a_display_name' => 'SPCC63.05',
+              'feature_b_id' => 2,
+              'interacting_gene_display_name' => 'ssm4',
+              'phenotypes' => ''
+            }
           ]);
 
 
@@ -916,11 +1134,16 @@ cmp_deeply($allele_res,
               'description' => 'deletion',
               'expression' => undef,
               'display_name' => 'ssm4delta',
+              'long_display_name' => 'ssm4delta',
               'name' => 'ssm4delta',
               'type' => 'deletion',
               'allele_id' => 1,
+              'comment' => undef,
               'gene_id' => 2,
               'gene_display_name' => 'ssm4',
+              'gene_systematic_id' => 'SPAC27D7.13c',
+              'synonyms' => [],
+              'notes' => {},
             },
             {
               'allele_id' => 3,
@@ -929,9 +1152,16 @@ cmp_deeply($allele_res,
               'uniquename' => 'SPAC27D7.13c:aaaa0007-3',
               'expression' => 'Knockdown',
               'display_name' => 'ssm4-D4(del_100-200)',
+              'long_display_name' => 'ssm4-D4(del_100-200)[Knockdown]',
               'name' => 'ssm4-D4',
               'type' => 'partial deletion, nucleotide',
+              'comment' => undef,
               'gene_display_name' => 'ssm4',
+              'gene_systematic_id' => 'SPAC27D7.13c',
+              'synonyms' => [{ edit_status => 'new', synonym => 'ssm4-c1' }],
+              'notes' => {
+                'note_test_key' => 'note_test_value',
+              },
             },
             {
               'uniquename' => 'SPAC27D7.13c:allele-2',
@@ -939,6 +1169,7 @@ cmp_deeply($allele_res,
               'display_name' => 'ssm4-L1(80-90)',
               'description' => '80-90',
               'name' => 'ssm4-L1',
+              'synonyms' => [],
             },
           ]);
 
@@ -952,35 +1183,59 @@ my $expected_genotype_detail_res =
   {
     'name' => 'SPCC63.05delta ssm4KE',
     background => 'h+',
+    comment => undef,
     'identifier' => 'aaaa0007-genotype-test-1',
-    'allele_string' => 'ssm4delta SPCC63.05delta',
+    'allele_string' => 'SPCC63.05delta ssm4delta',
     'genotype_id' => 1,
+    'locus_count' => 2,
+    'diploid_locus_count' => 0,
     'display_name' => 'SPCC63.05delta ssm4KE',
+    strain_name => undef,
     'alleles' => [
       {
         'allele_id' => 1,
         'description' => 'deletion',
         'display_name' => 'ssm4delta',
+        'long_display_name' => 'ssm4delta',
         'expression' => undef,
         'gene_id' => 2,
         'name' => 'ssm4delta',
         'type' => 'deletion',
         'uniquename' => 'SPAC27D7.13c:aaaa0007-1',
         'gene_display_name' => 'ssm4',
-      },
+        'gene_systematic_id' => 'SPAC27D7.13c',
+        'synonyms' => [],
+        'comment' => undef,
+        'notes' => {},
+     },
       {
         'allele_id' => 5,
         'description' => 'deletion',
         'display_name' => 'SPCC63.05delta',
+        'long_display_name' => 'SPCC63.05delta',
         'expression' => undef,
         'gene_id' => 4,
         'name' => 'SPCC63.05delta',
         'type' => 'deletion',
         'uniquename' => 'SPCC63.05:aaaa0007-1',
         'gene_display_name' => 'SPCC63.05',
+        'gene_systematic_id' => 'SPCC63.05',
+        'synonyms' => [],
+        'comment' => undef,
+        'notes' => {},
       },
     ],
     annotation_count => 1,
+    metagenotype_count_by_type => {
+      interaction => 1,
+    },
+    organism => {
+      scientific_name => 'Schizosaccharomyces pombe',
+      taxonid => '4896',
+      pathogen_or_host => 'unknown',
+      full_name => 'Schizosaccharomyces pombe',
+      common_name => 'fission yeast'
+    },
   };
 
 my $genotype_detail_res =
@@ -1008,7 +1263,7 @@ is ($genotype_delete_res->{message}, 'incorrect key');
 # fails because first_genotype has annotations
 $genotype_delete_res = $service_utils->delete_genotype($first_genotype->genotype_id(), { key => 'aaaa0007' });
 is ($genotype_delete_res->{status}, 'error');
-is ($genotype_delete_res->{message}, 'genotype 1 has annotations - delete failed');
+is ($genotype_delete_res->{message}, 'genotype has annotations - delete failed');
 
 my $second_genotype =
   $curs_schema->resultset('Genotype')->find({ identifier => 'aaaa0007-genotype-test-2' });
@@ -1034,9 +1289,15 @@ Canto::Track::validate_curs($config, $test_util->track_schema(),
 
 is (unused_alleles_count(), 0);
 
-$genotype_delete_res = $service_utils->delete_genotype($second_genotype->genotype_id(), { key => 'aaaa0007' });
-is ($genotype_delete_res->{status}, 'success');
+# delete the interaction metagenotype so we can test delete_genotype()
+$curs_schema->resultset('MetagenotypeAnnotation')->delete();
+$curs_schema->resultset('Metagenotype')->delete();
 
+$genotype_delete_res = $service_utils->delete_genotype($second_genotype->genotype_id(), { key => 'aaaa0007' });
+
+if ($genotype_delete_res->{status} ne 'success') {
+  fail($genotype_delete_res->{status});
+}
 
 is (unused_alleles_count(), 0);
 
@@ -1080,9 +1341,135 @@ cmp_deeply($session_detail_res,
              curator => {
                'curator_name' => 'Some Testperson',
                'curator_known_as' => undef,
-               'curator_email' => 'some.testperson@pombase.org',
+               'curator_email' => 'some.testperson@3926fef56bb23eb871ee91dc2e3fdd7c46ef1385.org',
                'community_curated' => JSON::true,
                'accepted_date' => '2012-02-15 13:45:00',
              },
              'state' => 'CURATION_IN_PROGRESS',
            });
+
+
+# metagenotype list
+
+# set pombe as a host organism in pathogen_host_mode
+$config->{host_organism_taxonids} = [4932];
+$config->_set_host_organisms($track_schema);
+$Canto::Track::OrganismLookup::cache = {};
+
+my $phi_phenotype_config = clone $config->{annotation_types}->{phenotype};
+$phi_phenotype_config->{name} = 'disease_formation_phenotype';
+$phi_phenotype_config->{namespace} = 'disease_formation_phenotype';
+$phi_phenotype_config->{feature_type} = 'metagenotype';
+
+push @{$config->{available_annotation_type_list}}, $phi_phenotype_config;
+$config->{annotation_types}->{$phi_phenotype_config->{name}} = $phi_phenotype_config;
+
+
+my $genotype_manager = Canto::Curs::GenotypeManager->new(config => $config,
+                                                         curs_schema => $curs_schema);
+my $existing_pombe_genotype =
+  $curs_schema->find_with_type('Genotype', { identifier => 'aaaa0007-genotype-test-1' });
+
+ok ($existing_pombe_genotype);
+
+my $cerevisiae_genotype =
+  $genotype_manager->make_genotype(undef, undef, [], 4932);
+
+my $metagenotype =
+  $genotype_manager->make_metagenotype(pathogen_genotype => $existing_pombe_genotype,
+                                       host_genotype => $cerevisiae_genotype);
+
+my $metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype');
+
+is (scalar(@{$metagenotypes_list_res}), 1);
+
+is ($metagenotypes_list_res->[0]->{host_genotype}->{identifier}, 'aaaa0007-genotype-3');
+is ($metagenotypes_list_res->[0]->{host_genotype}->{allele_string}, '');
+is ($metagenotypes_list_res->[0]->{host_genotype}->{organism}->{scientific_name},
+    'Saccharomyces cerevisiae');
+is ($metagenotypes_list_res->[0]->{pathogen_genotype}->{identifier}, 'aaaa0007-genotype-test-1');
+is ($metagenotypes_list_res->[0]->{pathogen_genotype}->{allele_string}, 'SPCC63.05delta ssm4delta');
+is ($metagenotypes_list_res->[0]->{pathogen_genotype}->{organism}->{scientific_name},
+    'Schizosaccharomyces pombe');
+
+
+$metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype', { pathogen_taxonid => 9954321 });
+
+is (scalar(@{$metagenotypes_list_res}), 0);
+
+$metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype', { pathogen_taxonid => 4896 });
+
+is (scalar(@{$metagenotypes_list_res}), 1);
+
+$metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype', { host_taxonid => 9954321 });
+
+is (scalar(@{$metagenotypes_list_res}), 0);
+
+$metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype', { host_taxonid => 9954321, pathogen_taxonid => 4896 });
+
+is (scalar(@{$metagenotypes_list_res}), 0);
+
+$metagenotypes_list_res =
+  $service_utils->list_for_service('metagenotype', { host_taxonid => 4932, pathogen_taxonid => 4896 });
+
+is (scalar(@{$metagenotypes_list_res}), 1);
+
+
+# strain lookup
+
+$track_schema = $test_util->track_schema();
+my $track_organism = $track_schema->resultset('Organism')->first();
+my $track_strain_1 = $track_schema->resultset('Strain')
+  ->create({ strain_name => 'track strain name 1', strain_id => 1001,
+             organism_id => $track_organism->organism_id() });
+$track_schema->resultset('Strainsynonym')
+  ->create({ strain => $track_strain_1, synonym => 'track_strain_1_syn' });
+
+
+my $curs_organism = $track_schema->resultset('Organism')->first();
+$curs_schema->resultset('Strain')
+  ->create({ strain_name => 'curs strain',
+             organism_id => $curs_organism->organism_id() });
+$curs_schema->resultset('Strain')
+  ->create({ track_strain_id => 1001,
+             organism_id => $curs_organism->organism_id() });
+
+my $strain_res = $service_utils->list_for_service('strain');
+
+is(@$strain_res, 2);
+
+cmp_deeply($strain_res,
+           [
+             {
+               'taxon_id' => 4896,
+               'strain_name' => 'curs strain'
+             },
+             {
+               'strain_id' => 1001,
+               'taxon_id' => 4896,
+               'strain_name' => 'track strain name 1',
+               'synonyms' => ['track_strain_1_syn'],
+             }
+           ]);
+
+
+$service_utils->delete_strain_by_id(1001);
+
+
+$strain_res = $service_utils->list_for_service('strain');
+
+is(@$strain_res, 1);
+
+cmp_deeply($strain_res,
+           [
+             {
+               'taxon_id' => 4896,
+               'strain_name' => 'curs strain'
+             },
+           ]);
+

@@ -6,6 +6,9 @@ use Carp;
 use File::Basename;
 use IO::All;
 use Getopt::Long;
+use Fcntl qw(:flock);
+use Text::CSV;
+use Try::Tiny;
 
 BEGIN {
   my $script_name = basename $0;
@@ -32,8 +35,11 @@ use Canto::Config::ExtensionProcess;
 
 my $do_genes = 0;
 my $do_pubmed_xml = 0;
+my $do_organisms = 0;
+my $do_strains = 0;
 my $for_taxon = 0;
 my @ontology_args = ();
+my @delete_ontology_args = ();
 my $do_process_extension_config = 0;
 my $dry_run = 0;
 my $verbose = 0;
@@ -45,6 +51,9 @@ if (@ARGV == 0) {
 
 my $result = GetOptions ("genes=s" => \$do_genes,
                          "ontology=s" => \@ontology_args,
+                         "delete-ontology=s" => \@delete_ontology_args,
+                         "organisms=s" => \$do_organisms,
+                         "strains=s" => \$do_strains,
                          "process-extension-config" => \$do_process_extension_config,
                          "pubmed-xml=s" => \$do_pubmed_xml,
                          "for-taxon=i" => \$for_taxon,
@@ -65,10 +74,15 @@ sub usage
   die qq|${message}usage:
   $0 --genes genes_file --for-taxon=<taxon_id>
 or:
+  $0 --organisms organisms_file.csv
+or:
+  $0 --strains strains_files.csv
+or:
   $0 --ontology ontology_file.obo
   $0 --ontology ontology_file.obo --ontology another_ontology.obo
   $0 --ontology http://some_host.org/file.obo
   $0 --process-extension-config --ontology ontology_file.obo --ontology another_ontology.obo
+        --delete-ontology "some_ontology_name"
 or:
   $0 --pubmed-xml pubmed_entries.xml
 or in combination:
@@ -79,11 +93,14 @@ Options:
   --genes     - load a tab delimited gene data file, must also specify
                 the organism with --for-taxon
   --ontology  - load an ontology data file in OBO format
+  --delete-ontology - in combination with "--ontology", delete an existing
+                      ontology by name
   --pubmed-xml - load publications from a PubMed XML file; only loads
                  publications that aren't already in the database
 
 Any combination of options is valid (eg. genes and ontologies can be
 loaded at once) but at most one "--genes" option is allowed.
+
 
 File formats
 ~~~~~~~~~~~~
@@ -95,6 +112,11 @@ The genes file should have 4 columns, separated by tabs:
   product
 
 The ontology files should be in OBO format
+
+The organisms file have 3 columns, separated by commas:
+  scientific name (usually "Genus species")
+  taxon ID
+  common name
 
 
 Extension config processing
@@ -143,6 +165,9 @@ if (!Canto::Meta::Util::app_initialised($app_name, $suffix)) {
     "script\n";
 }
 
+open my $this_script, '<', $0 or die "can't open $0 for reading";
+flock($this_script, LOCK_EX) or die "can't get lock on $0";
+
 my $config = Canto::Config::get_config();
 my $schema = Canto::TrackDB->new(config => $config);
 
@@ -170,6 +195,93 @@ if ($do_genes) {
   $guard->commit unless $dry_run;
 }
 
+if ($do_organisms) {
+  my $load_util = Canto::Track::LoadUtil->new(schema => $schema);
+  my $guard = $schema->txn_scope_guard;
+
+  open my $fh, '<', $do_organisms or die "can't open $do_organisms: $!";
+
+  my %seen_org_names = ();
+  my %seen_taxonids = ();
+
+  while (defined (my $line = <$fh>)) {
+    next if $line =~ /Genus|ScientificName/ && $. == 1;
+
+    chomp $line;
+
+    if ($line !~ /,/) {
+      warn "line doesn't look comma separated: $line\n";
+      next;
+    }
+
+    my ($scientific_name, $taxonid, $common_name) =
+      map { s/^\s+//; s/\s+$//; $_; } split (/,/, $line);
+
+    if (!defined $taxonid) {
+      warn "not enough fields in line: $line\n";
+      next;
+    }
+
+    $scientific_name =~ s/^\s+//;
+    $scientific_name =~ s/\s+$//;
+    $scientific_name =~ s/\s+/ /;
+
+    if ($taxonid !~ /^\d+$/) {
+      $guard->{inactivated} = 1;
+      die qq(load failed - Taxon ID on line $. isn't an integer: $taxonid\n);
+    }
+
+    if (exists $seen_org_names{$scientific_name}) {
+      $guard->{inactivated} = 1;
+      my ($previous_taxonid, $previous_line) = @{$seen_org_names{$scientific_name}};
+      if ($previous_taxonid == $taxonid) {
+        die "load failed - duplicate scientific name and taxon ID at input lines: "
+          . "$. and $previous_line\n";
+      } else {
+        die "load failed - same scientific name with different taxon ID at lines: "
+          . "$. and $previous_line\n";
+      }
+    }
+
+    if (exists $seen_taxonids{$taxonid}) {
+      my ($previous_taxonid, $previous_line) = @{$seen_taxonids{$taxonid}};
+
+      $guard->{inactivated} = 1;
+      die "load failed - duplicate taxonid at lines $. and $previous_line\n";
+    }
+
+    $seen_org_names{$scientific_name} = [$taxonid, $.];
+    $seen_taxonids{$taxonid} = [$scientific_name, $.];
+
+    my $org = $load_util->find_organism_by_taxonid($taxonid);
+
+    if ($org) {
+      $org->scientific_name($scientific_name);
+      $org->common_name($common_name);
+      $org->update();
+    } else {
+      $load_util->get_organism($scientific_name, $taxonid, $common_name);
+    }
+  }
+
+  $guard->commit unless $dry_run;
+}
+
+if ($do_strains) {
+  my $load_util = Canto::Track::LoadUtil->new(schema => $schema);
+  my $guard = $schema->txn_scope_guard;
+
+  try {
+    $load_util->load_strains($config, $do_strains);
+  } catch {
+    warn $_;
+    $guard->{inactivated} = 1;
+    exit 1;
+  };
+
+  $guard->commit unless $dry_run;
+}
+
 if (@ontology_args) {
   my $index_path = $config->data_dir_path('ontology_index_dir');
 
@@ -190,18 +302,18 @@ if (@ontology_args) {
                                                       relationships_to_load => \@relationships_to_load);
   my $synonym_types = $config->{load}->{ontology}->{synonym_types};
 
-  $ontology_load->load([@ontology_args], $index, $synonym_types);
+  $ontology_load->load([@ontology_args], [@delete_ontology_args], $index, $synonym_types);
 
   if (!$dry_run) {
     $ontology_load->finalise();
     $index->finish_index();
-  }
 
-  my $term_update = Canto::Curs::TermUpdate->new(config => $config);
+    my $term_update = Canto::Curs::TermUpdate->new(config => $config);
 
-  my $iter = Canto::Track::curs_iterator($config, $schema);
-  while (my ($curs, $cursdb) = $iter->()) {
-    $term_update->update_curs_terms($cursdb);
+    my $iter = Canto::Track::curs_iterator($config, $schema);
+    while (my ($curs, $cursdb) = $iter->()) {
+      $term_update->update_curs_terms($cursdb);
+    }
   }
 }
 
@@ -211,3 +323,5 @@ if ($do_pubmed_xml) {
   Canto::Track::PubmedUtil::load_pubmed_xml($schema, $xml,
                                              'admin_load');
 }
+
+flock($this_script, LOCK_UN) or die "can't unlock $0";

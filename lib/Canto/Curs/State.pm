@@ -81,6 +81,7 @@ use constant {
   SESSION_CREATED_TIMESTAMP_KEY => 'session_created_timestamp',
   CURATION_PAUSED_TIMESTAMP_KEY => 'curation_paused_timestamp',
   CURATION_IN_PROGRESS_TIMESTAMP_KEY => 'curation_in_progress_timestamp',
+  SESSION_FIRST_SUBMITTED_TIMESTAMP_KEY => 'session_first_submitted_timestamp',
   NEEDS_APPROVAL_TIMESTAMP_KEY => 'needs_approval_timestamp',
   FIRST_APPROVED_TIMESTAMP_KEY => 'first_approved_timestamp',
   APPROVED_TIMESTAMP_KEY => 'approved_timestamp',
@@ -88,12 +89,14 @@ use constant {
   ACCEPTED_TIMESTAMP_KEY => 'accepted_timestamp',
   APPROVAL_IN_PROGRESS_TIMESTAMP_KEY => 'approval_in_progress_timestamp',
   EXPORTED_TIMESTAMP_KEY => 'exported_timestamp',
+  FIRST_EXPORTED_TIMESTAMP_KEY => 'first_exported_timestamp',
   TERM_SUGGESTION_COUNT_KEY => 'term_suggestion_count',
   UNKNOWN_CONDITIONS_COUNT_KEY => 'unknown_conditions_count',
   APPROVER_NAME_KEY => 'approver_name',
   APPROVER_EMAIL_KEY => 'approver_email',
   NO_ANNOTATION_REASON_KEY => 'no_annotation_reason',
   REACTIVATED_TIMESTAMP_KEY => 'reactivated_timestamp',
+  UNEXPORTED_TIMESTAMP_KEY => 'unexported_timestamp',
   SESSION_SUBMITTED_TIMESTAMP_KEY => 'session_submitted_timestamp',
   ANNOTATION_MODE_KEY => 'annotation_mode',
 };
@@ -238,15 +241,16 @@ sub store_statuses
     croak "too many arguments for store_statuses()";
   }
 
-  my ($status, $submitter, $gene_count, $datestamp) = $self->get_state($schema);
-
   my $metadata_rs = $schema->resultset('Metadata');
   my $curs_key_row = $metadata_rs->find({ key => 'curs_key' });
 
   if (!defined $curs_key_row) {
-    warn 'failed to read curs_key from: ', $schema->storage()->connect_info();
+    warn 'failed to read curs_key from: ', $schema->storage()->connect_info()->[0];
     return;
   }
+
+  my ($status, $submitter, $gene_count, $datestamp) = $self->get_state($schema);
+
   my $curs_key = $curs_key_row->value();
 
   my $term_suggest_count_row =
@@ -287,12 +291,44 @@ sub store_statuses
                                    $reactivated_timestamp_row->value());
   }
 
+  my $exported_timestamp_row =
+    $metadata_rs->search({ key => EXPORTED_TIMESTAMP_KEY })->first();
+
+  if (defined $exported_timestamp_row) {
+    $self->status_adaptor()->store($curs_key, 'session_exported_timestamp',
+                                   $exported_timestamp_row->value());
+  }
+
+  my $first_exported_timestamp_row =
+    $metadata_rs->search({ key => FIRST_EXPORTED_TIMESTAMP_KEY })->first();
+
+  if (defined $first_exported_timestamp_row) {
+    $self->status_adaptor()->store($curs_key, 'session_first_exported_timestamp',
+                                   $first_exported_timestamp_row->value());
+  }
+
+  my $unexported_timestamp_row =
+    $metadata_rs->search({ key => UNEXPORTED_TIMESTAMP_KEY })->first();
+
+  if (defined $unexported_timestamp_row) {
+    $self->status_adaptor()->store($curs_key, 'session_unexported_timestamp',
+                                   $unexported_timestamp_row->value());
+  }
+
   my $needs_approval_timestamp_row =
     $metadata_rs->search({ key => NEEDS_APPROVAL_TIMESTAMP_KEY })->first();
 
   if (defined $needs_approval_timestamp_row) {
     $self->status_adaptor()->store($curs_key, 'needs_approval_timestamp',
                                    $needs_approval_timestamp_row->value());
+  }
+
+  my $first_approved_timestamp_row =
+    $metadata_rs->search({ key => FIRST_APPROVED_TIMESTAMP_KEY })->first();
+
+  if (defined $first_approved_timestamp_row) {
+    $self->status_adaptor()->store($curs_key, 'first_approved_timestamp',
+                                   $first_approved_timestamp_row->value());
   }
 
   my $approver_name_row = $metadata_rs->find({ key => 'approver_name' });
@@ -326,10 +362,6 @@ sub set_state
     warn "NOOP: setting $current_state to $new_state - $force\n", longmess();
   }
 
-  if ($current_state eq EXPORTED) {
-    croak "can't change state from ", EXPORTED;
-  }
-
   my %dispatch = (
     SESSION_ACCEPTED, sub {
       if ($current_state ne SESSION_CREATED && $force ne $current_state) {
@@ -358,6 +390,17 @@ sub set_state
       $self->set_metadata($schema, CURATION_IN_PROGRESS_TIMESTAMP_KEY,
                           Canto::Util::get_current_datetime());
       $self->unset_metadata($schema, CURATION_PAUSED_TIMESTAMP_KEY);
+
+      if (!$self->get_metadata($schema, SESSION_FIRST_SUBMITTED_TIMESTAMP_KEY)) {
+        my $last_needs_approval_timestamp = $self->get_metadata($schema, NEEDS_APPROVAL_TIMESTAMP_KEY);
+        if ($last_needs_approval_timestamp) {
+          # we didn't store the first submitted timestamp previously so we
+          # do our best effort by using the existing needs_approval_timestamp
+          $self->set_metadata($schema, SESSION_FIRST_SUBMITTED_TIMESTAMP_KEY,
+                              $last_needs_approval_timestamp);
+        }
+      }
+
       $self->unset_metadata($schema, NEEDS_APPROVAL_TIMESTAMP_KEY);
       $self->unset_metadata($schema, APPROVAL_IN_PROGRESS_TIMESTAMP_KEY);
       $self->unset_metadata($schema, APPROVED_TIMESTAMP_KEY);
@@ -385,8 +428,16 @@ sub set_state
         carp "trying to start approving a session that isn't in the state ",
           CURATION_IN_PROGRESS, " it's currently: ", $current_state;
       }
+
+      # see: https://github.com/pombase/website/issues/1132
+      if (!$self->get_metadata($schema, SESSION_FIRST_SUBMITTED_TIMESTAMP_KEY)) {
+        $self->set_metadata($schema, SESSION_FIRST_SUBMITTED_TIMESTAMP_KEY,
+                            Canto::Util::get_current_datetime());
+      }
+
       $self->set_metadata($schema, NEEDS_APPROVAL_TIMESTAMP_KEY,
                           Canto::Util::get_current_datetime());
+
       $self->unset_metadata($schema, APPROVAL_IN_PROGRESS_TIMESTAMP_KEY);
       $self->unset_metadata($schema, APPROVED_TIMESTAMP_KEY);
       $self->unset_metadata($schema, EXPORTED_TIMESTAMP_KEY);
@@ -427,11 +478,22 @@ sub set_state
         carp "must be in state ", APPROVAL_IN_PROGRESS,
           " (not $current_state) to change to state ", APPROVED;
       }
+
+      if ($current_state eq EXPORTED) {
+        $self->set_metadata($schema, Canto::Curs::State::UNEXPORTED_TIMESTAMP_KEY,
+                            Canto::Util::get_current_datetime());
+      }
+
       # see: https://github.com/pombase/website/issues/592#issuecomment-341689763
       if (!$self->get_metadata($schema, FIRST_APPROVED_TIMESTAMP_KEY) &&
           !$self->get_metadata($schema, PREVIOUS_APPROVED_TIMESTAMP_KEY)) {
         $self->set_metadata($schema, FIRST_APPROVED_TIMESTAMP_KEY,
                             Canto::Util::get_current_datetime());
+      }
+      if (!$self->get_metadata($schema, FIRST_APPROVED_TIMESTAMP_KEY) &&
+          $self->get_metadata($schema, PREVIOUS_APPROVED_TIMESTAMP_KEY)) {
+        $self->set_metadata($schema, FIRST_APPROVED_TIMESTAMP_KEY,
+                            $self->get_metadata($schema, PREVIOUS_APPROVED_TIMESTAMP_KEY));
       }
       $self->set_metadata($schema, APPROVED_TIMESTAMP_KEY,
                           Canto::Util::get_current_datetime());
@@ -441,6 +503,10 @@ sub set_state
       if ($current_state ne APPROVED) {
         carp "must be in state ", APPROVED,
           " (not $current_state) to change to state ", EXPORTED;
+      }
+      if (!$self->get_metadata($schema, FIRST_EXPORTED_TIMESTAMP_KEY)) {
+        $self->set_metadata($schema, FIRST_EXPORTED_TIMESTAMP_KEY,
+                            Canto::Util::get_current_datetime());
       }
       $self->set_metadata($schema, EXPORTED_TIMESTAMP_KEY,
                           Canto::Util::get_current_datetime());

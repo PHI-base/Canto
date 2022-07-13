@@ -1,10 +1,19 @@
 <span style="padding-bottom: 10px">
   <span ng-if="rangeConfig.type == 'Gene'">
     <span ng-if="disabled">Gene</span>
-    <feature-chooser ng-if="!disabled"
-                     feature-type="gene" chosen-feature-uniquename="extensionRelation.rangeValue"
+    <feature-chooser ng-if="!disabled && genes"
+                     features="genes" feature-type="gene"
+                     chosen-feature-uniquename="extensionRelation.rangeValue"
                      chosen-feature-display-name="extensionRelation.rangeDisplayName"
                      chosen-feature-id="rangeGeneId"></feature-chooser>
+    <a ng-click="openSingleGeneAddDialog()">Add new gene to this session…</a>
+  </span>
+  <span ng-if="rangeConfig.type == 'Metagenotype'">
+    <span ng-if="disabled">Metagenotype</span>
+    <feature-chooser ng-if="!disabled && metagenotypes"
+                     features="metagenotypes" feature-type="'metagenotype'"
+                     chosen-feature-display-name="extensionRelation.rangeDisplayName"
+                     chosen-feature-id="extensionRelation.rangeValue"></feature-chooser>
   </span>
   <span ng-if="rangeConfig.type == 'Ontology'">
     <span ng-if="disabled">Term name</span>
@@ -13,7 +22,6 @@
                           found-callback="termFoundCallback(termId, termName, searchString)"
                           mode="extension" size="60"
                           annotation-type-name="{{rangeOntologyScope}}"></term-name-complete>
-      <span class="curs-extension-name-complete-hint">(Start typing a description)</span>
     </span>
   </span>
   <span ng-if="rangeConfig.type == 'Text'">
@@ -34,5 +42,12 @@
     <span ng-if="disabled">Value</span>
     <input ng-if="!disabled"
            type="number" required ng-model="extensionRelation.rangeValue"/>
+  </span>
+  <span ng-if="rangeConfig.type === 'TaxonID' || rangeConfig.type === 'PathogenTaxonID' || rangeConfig.type === 'HostTaxonID'">
+    <organism-selector
+      ng-if="!disabled && organisms"
+      organisms="organisms"
+      organism-selected="organismSelected(organism)">
+    </organism-selector>
   </span>
 </span>

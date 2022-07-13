@@ -45,6 +45,9 @@ requires 'feature_class';
 requires 'lookup_by_synonym_rs';
 requires 'schema';
 requires 'taxon_id_lookup';
+requires 'config';
+requires 'get_organism_resultset';
+requires 'synonyms_of_gene_rs';
 
 sub build_gene_constraint
 {
@@ -53,13 +56,29 @@ sub build_gene_constraint
   my $uniquename_column = $self->uniquename_column();
   my $name_column = $self->name_column();
 
+  my $uniquename_key;
+  my $name_key;
+
+  if ($self->config()->{chado}->{ignore_case_in_gene_query}) {
+    $uniquename_key = "lower($uniquename_column)";
+    $name_key = "lower($name_column)";
+  } else {
+    $uniquename_key = $uniquename_column;
+    $name_key = $name_column;
+  }
+
   return map {
-    {
-      "lower($uniquename_column)" => $_
-    },
-    {
-      "lower($name_column)" => $_
+    my @ret = ({
+      $uniquename_key => $_
+    });
+
+    if ($self->config()->{gene_lookup}->{query_by_name}) {
+      push @ret, {
+        $name_key => $_
+      }
     }
+
+    @ret;
   } @_;
 }
 
@@ -103,7 +122,7 @@ sub _read_genes
 
     my @synonym_identifiers = ();
 
-    for my $synonym ($found_gene->synonyms()) {
+    for my $synonym ($self->synonyms_of_gene_rs($found_gene)->all()) {
       my $synonym_identifier = $synonym->name();
       push @synonym_identifiers, $synonym_identifier;
 
@@ -113,15 +132,21 @@ sub _read_genes
       }
     }
 
-    push @found_genes, {
+    my $organism_full_name = $found_gene->organism()->full_name();
+
+    my $taxonid = $self->taxon_id_lookup($found_gene->organism());
+
+    my $result_gene = {
       primary_identifier => $found_gene->$uniquename_column(),
       primary_name => $found_gene->$name_column(),
       product => $self->gene_product($found_gene),
       synonyms => [@synonym_identifiers],
-      organism_full_name => $found_gene->organism()->full_name(),
-      organism_taxonid => $self->taxon_id_lookup($found_gene->organism()),
+      organism_full_name => $organism_full_name,
+      organism_taxonid => $taxonid,
       match_types => \%match_types,
-    }
+    };
+
+    push @found_genes, $result_gene;
   }
 
   return (\@found_genes, \%gene_ids, \%terms_found);
@@ -135,8 +160,7 @@ sub _read_genes
        or:
            my $results =
              $gene_lookup->lookup({ search_organism => {
-                                      genus => 'Schizosaccharomyces',
-                                      species => 'pombe',
+                                      scientific_name => 'Schizosaccharomyces pombe',
                                     }
                                   },
                                   [qw(cdc11 SPCTRNASER.13 test foo)]);
@@ -180,12 +204,9 @@ sub lookup
   my $org_constraint = undef;
 
   if (exists $options->{search_organism}) {
-    my $search_species = $options->{search_organism}->{species};
-    my $search_genus = $options->{search_organism}->{genus};
+    my $search_scientific_name = $options->{search_organism}->{scientific_name};
 
-    my $org_rs = $self->schema()->resultset('Organism')
-      ->search({ species => $search_species,
-                 genus => $search_genus });
+    my $org_rs = $self->get_organism_resultset($search_scientific_name);
 
     $org_constraint = {
       -in => $org_rs->get_column('organism_id')->as_query(),
@@ -196,7 +217,13 @@ sub lookup
   @lc_search_terms{@lc_search_terms} = @lc_search_terms;
 
   my $gene_rs = $self->schema()->resultset($self->feature_class());
-  my $rs = $gene_rs->search([$self->build_gene_constraint(@lc_search_terms)],
+  my @rs_constraints;
+  if ($self->config()->{chado}->{ignore_case_in_gene_query}) {
+    @rs_constraints = $self->build_gene_constraint(@lc_search_terms)
+  } else {
+    @rs_constraints = $self->build_gene_constraint(@{$search_terms_ref})
+  }
+  my $rs = $gene_rs->search([@rs_constraints],
                             { $self->gene_search_options(feature_alias => 'me') });
   if (defined $org_constraint) {
     $rs = $rs->search({ 'me.' . $self->organism_id_column() => $org_constraint });

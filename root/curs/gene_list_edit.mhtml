@@ -2,119 +2,79 @@
 $schema
 $title => 'Genes'
 $pub
-@gene_list
+@gene_hashes
 @highlight_terms => ()
 $curs_root_uri
 $multi_organism_mode
+$pathogen_host_mode
+$confirm_genes
+$gene_list_data_js
+$hosts_with_no_genes_js
 </%args>
+
+<script language="javascript" type="text/javascript">
+var confirmGenes = <% $confirm_genes ? 'true' : 'false' %>;
+var highlightTerms = [<% join( ',', map { "'" . $_ . "'" } @highlight_terms ) %>];
+var geneListData = <% $gene_list_data_js |n %>;
+var hostsWithNoGenes = <% $hosts_with_no_genes_js |n %>;
+</script>
 
 <div id="curs-gene-list-edit" class="curs-box">
   <div class="curs-box-title">
 <% $title %>
   </div>
   <div class="curs-box-body">
-  
-  <form name="gene-edit" method="get" action="<% $edit_path %>">
-% if (@gene_hashes) {
-  <table class="list">
-
-    <thead>
-      <tr>
-%     for my $col_name (@col_names) {
-        <th>
-          <% $col_name %>
-        </th>
-%     }
-        <th>
-          &nbsp;
-        </th>
-      </tr>
-    </thead>
-
-%   for my $gene (@gene_hashes) {
-    <tr>
-%     for my $col_name (@col_names) {
-      <td>
-        <% $gene->{$col_name} |n %>
-      </td>
-%     }
-      <td>
-        <input type="checkbox"
-               name="gene-select"
-               value='<% $gene->{gene_id} %>' />
-      </td>
-    </tr>
-%   }
-  </table>
-  <div class="submit">
-    <input type="submit" class="btn btn-primary" name="continue" value="Continue"/>
-  </div>
-  <div class="submit">
-    <input type="submit" class="btn btn-primary" name="submit" value="Remove selected"/>
-  </div>
+    <% $gene_page_top_message | n %>
+% if ($pathogen_host_mode) {
+    <edit-organisms></edit-organisms>
 % } else {
+
+%   if (@gene_hashes) {
+  <form name="gene-edit" method="get" action="<% $edit_path %>">
+  <& /curs/gene_list_edit_table.mhtml, col_names => \@col_names, gene_hashes => \@gene_hashes &>
+%   } else {
   <div class="no-genes-message">
     [No genes]
   </div>
+%   }
+
 % }
 
+% if (!$pathogen_host_mode) {
+<div class="submit">
+  <input type="submit" class="btn btn-primary" name="continue" value="Continue"/>
+</div>
+<div class="submit">
+  <input type="submit" class="btn btn-primary" name="submit" value="Remove selected"/>
+</div>
+
 <div class="upload-genes-link">
-  <a href="<% $upload_path %>">Add more genes from <% $pub->uniquename() %> ...</a>
+  <a href="<% $upload_path %>"><% $add_more_genes_message %></a>
 </div>
 </form>
+%}
 </div>
 </div>
 
 <%init>
-use Canto::Curs;
-use Canto::Track;
-use Canto::Curs::GeneProxy;
+my $upload_path = "$curs_root_uri/gene_upload";
+my $edit_path = "$curs_root_uri/edit_genes";
 
-my %highlight_terms = ();
-@highlight_terms{@highlight_terms} = @highlight_terms;
+my $add_more_genes_message;
 
-sub _search_highlight
-{
-  my $highlight_terms = shift;
-  my $identifier = shift;
-
-  return '' if !defined $identifier;
-
-  HTML::Mason::Escapes::basic_html_escape(\$identifier);
-
-  if (exists $highlight_terms->{$identifier}) {
-    return '<span class="curs-matched-search-term">' . $identifier . '</span>';
-  } else {
-    return $identifier;
-  }
+if ($c->config()->{pathogen_host_mode}) {
+  $add_more_genes_message =
+   'Add more genes and host organisms from ' . $pub->uniquename();
+} else {
+  $add_more_genes_message =
+    'Add more genes from ' . $pub->uniquename();
 }
 
-my @gene_hashes = map {
-     my $gene = $_;
-     my $gene_proxy =
-       Canto::Curs::GeneProxy->new(config => $c->config(), cursdb_gene => $_);
-
-     my $synonyms_string =
-       join (',', map { _search_highlight(\%highlight_terms, $_) } $gene_proxy->synonyms());
-     my $hash = {
-       'Systematic identifier' => _search_highlight(\%highlight_terms, $gene_proxy->primary_identifier()),
-       Name => _search_highlight(\%highlight_terms, $gene_proxy->primary_name()),
-       Product => $gene_proxy->product(),
-       Synonyms => $synonyms_string,
-       gene_id => $gene_proxy->gene_id(),
-     };
-     if ($multi_organism_mode) {
-       $hash->{Organism} = $gene_proxy->organism()->full_name();
-     }
-     $hash
-   } @gene_list;
+my $gene_page_top_message = $c->config()->{curs_config}->{gene_page_top_message};
 
 my @col_names = ("Systematic identifier", "Name", "Synonyms", "Product");
 
 if ($multi_organism_mode) {
   push @col_names, "Organism";
 }
-
-my $upload_path = "$curs_root_uri/gene_upload";
-my $edit_path = "$curs_root_uri/edit_genes";
 </%init>

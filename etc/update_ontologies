@@ -1,0 +1,48 @@
+#!/bin/bash -
+
+date
+
+set -eu
+set -o pipefail
+
+if [ $# != 1 ]
+then
+  echo needs 1 argument
+  exit 1
+fi
+
+where=$1
+
+SOURCES=/var/pomcur/canto-sources
+
+export OWLTOOLS_MEMORY=20g
+LOG=/tmp/load-log-$$.log
+echo loading $where > $LOG
+
+PATH=/usr/local/owltools-v0.3.0-74-gee0f8bbd/OWLTools-Runner/bin:$PATH
+
+echo updating $where server - `date`
+(cd $SOURCES/go-svn/; svn update)
+
+(cd /var/pomcur/pombase-config; git pull)
+
+curl -L http://purl.obolibrary.org/obo/go/snapshot/extensions/go-plus.owl > /tmp/go-plus.owl &&
+(cd $SOURCES/go-svn/ontology/extensions; owltools /tmp/go-plus.owl --reasoner elk --make-species-subset --perform-macro-expansion false -t NCBITaxon:4896 -o -f obo --no-check $SOURCES/go-plus-pombe-only.obo)
+#(cd /tmp/; rm -f go-basic.obo; wget http://purl.obolibrary.org/obo/go/go-basic.obo)
+(cd $SOURCES/pombe-embl; svn update --ignore-externals)
+(cd /var/pomcur/canto-sources/SO-Ontologies-git; git pull)
+(cd $SOURCES/pombase_fypo_git_for_canto; git pull) &&
+(cd /var/pomcur/apps/$where/; perl ./script/canto_load.pl -v --process-extension-config \
+  --ontology $SOURCES/pombase_fypo_git_for_canto/release/fypo-simple.obo \
+  --ontology $SOURCES/go-plus-pombe-only.obo \
+  --ontology $SOURCES/psi-mod-CV/PSI-MOD.obo \
+  --ontology $SOURCES/pombase_fypo_git_for_canto/fyeco.obo \
+  --ontology $SOURCES/pombe-embl/mini-ontologies/fypo_extension.obo \
+  --ontology $SOURCES/SO-Ontologies-git/Ontology_Files/so-simple.obo \
+  --ontology $SOURCES/pombe-embl/mini-ontologies/has_qualifier_range.obo \
+  --ontology $SOURCES/pombe-embl/mini-ontologies/pombase_gene_expression_ontology.obo \
+  --ontology /var/pomcur/sources/pato-simple.obo) 2>&1 | tee -a $LOG || (cat $LOG | mail -s 'Ontology update failed' helpdesk@pombase.org ; cat $LOG)
+
+echo finished update - `date`
+
+

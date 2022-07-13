@@ -18,18 +18,20 @@ database_name: CONFIGURE_IN_CANTO_DEPLOY.YAML
 #
 # database_url: SET_ME
 
+instance_front_subtitle: Add your work
+
 header_image_url: '/'
 header_image: logos/curation_tool.png
 
-canto_url: http://curation.pombase.org/
+canto_url: https://curation.pombase.org/
 
-app_version: v1171
+app_version: v1684
 
-schema_version: 15
+schema_version: 33
 
 ## Set this to create a Canto instance for a particular organism.  If not set,
-## all gene lookups with match genes from any organism (and will return the
-## organism).
+## Canto will be in multi-organism mode and the multi_organism_mode will be set.
+## In multi-organism mode all gene lookups with match genes from any organism.
 #instance_organism:
 #  taxonid: 4896
 
@@ -37,13 +39,17 @@ schema_version: 15
 ## look for an Organismprop for the Organism with type "taxon_id" .
 ## see also: Canto::Role::TaxonIDLookup
 # organism_taxon_id:
-#   Schizosaccharomyces:
-#     pombe: 4896
+#   'Schizosaccharomyces pombe': 4896
+
+## set to 1 to enable strains for genotypes
+strains_mode: 0
 
 # the path that the home link goes to
 instance_front_path: /docs/instance_front
 canto_front_path: /docs/canto_front
 help_path: /docs/index
+
+base_docs_path: docs
 
 # if zero, the user will need to log in before the links on the front page are
 # visible
@@ -71,6 +77,56 @@ view_options:
 # publication page - too many will slow the page loading
 max_existing_annotations: 100
 
+# if 1, allow editing of the expression of alleles and show the expression
+# as a column in the genotype table on the genotype management page
+alleles_have_expression: 1
+
+# if 1, show the organism in a selector on the genotype management pages
+# and only show genes and genotypes for the selected organism
+split_genotypes_by_organism: 1
+
+# if 0, a wildtype allele is allowed only if there is another non-wildtype or
+# non-wildtype expression allele from the same gene
+allow_single_wildtype_allele: 0
+
+# if 1, allow diploids to be created and used in genotypes
+diploid_mode: 0
+
+# if 1, add a "Figure" field to annotations
+annotation_figure_field: 1
+
+# if 0, hide the list of genes and actions on the left hand side of
+# the genotype management page
+show_genotype_management_genes_list: 1
+
+# if 1, use FlyBase specific tweaks
+flybase_mode: 0
+
+# a map of allele note types eg. { phenotype: { display_name: Phenotype } }
+allele_note_types: []
+
+# if 1, show the shortcut buttons on the genotype management page for quick
+# deletion allele creation
+show_quick_deletion_buttons: 1
+
+# header for the external notes section on the front page
+external_notes_label: External notes
+
+# header for the message to curators section on the front page (if enabled)
+message_to_curators_label: Message to curators
+
+# if 1, show the external notes section on the front page even if there are
+# no notes - we show "[none]" in that case
+always_show_external_notes_section: 0
+
+# if 1, show the internal notes (from "Edit message to curators") on the front page
+show_message_for_curators_on_front_page: 0
+
+# if 1, sort the genotypes on the genotype management page using the order in
+# the allele_type_list
+# For multi allele genotype, only considering the type of the first allele
+sort_genotype_management_page_by_allele_type: 0
+
 # from_address - used as the "from" field is all outgoing messages
 # admin_address - the contact address of the admin curators, used to
 #                 alert about completed sessions and problems
@@ -78,6 +134,7 @@ email:
   from_address: CONFIGURE_ME_IN_CANTO_DEPLOY.YAML
   admin_address: CONFIGURE_ME_IN_CANTO_DEPLOY.YAML
   noreply_address: CONFIGURE_ME_IN_CANTO_DEPLOY.YAML
+  # template_root: "/some/absolute/path/"
   templates:
     session_accepted:
       subject: "email_templates/generic/session_accepted_subject.mhtml"
@@ -239,9 +296,34 @@ db_initial_data:
               accession: session_reactivated_timestamp
               db:
                 name: Canto
+          - name: session_unexported_timestamp
+            dbxref:
+              accession: session_unexported_timestamp
+              db:
+                name: Canto
+          - name: session_exported_timestamp
+            dbxref:
+              accession: session_exported_timestamp
+              db:
+                name: Canto
+          - name: session_first_exported_timestamp
+            dbxref:
+              accession: session_first_exported_timestamp
+              db:
+                name: Canto
           - name: needs_approval_timestamp
             dbxref:
               accession: needs_approval_timestamp
+              db:
+                name: Canto
+          - name: first_approved_timestamp
+            dbxref:
+              accession: first_approved_timestamp
+              db:
+                name: Canto
+          - name: session_first_submitted_timestamp
+            dbxref:
+              accession: session_first_submitted_timestamp
               db:
                 name: Canto
       - name: Canto publication triage status
@@ -351,6 +433,11 @@ db_initial_data:
           - name: Retracted
             dbxref:
               accession: retracted
+              db:
+                name: Canto
+          - name: Duplicated in PubMed
+            dbxref:
+              accession: duplicated_in_pubmed
               db:
                 name: Canto
           - name: Modelling
@@ -563,12 +650,9 @@ class_info:
       editable: 1
       display_field: full_name
       order_by:
-        - genus
-        - species
+        - scientific_name
       field_info_list:
-        - name: genus
-          editable: 1
-        - name: species
+        - name: scientific_name
           editable: 1
     organism_report:
       extends: organism
@@ -602,10 +686,10 @@ class_info:
           admin_only: 1
         - name: Sessions
           source:
-            sql: "select count(curs) from curs_curator cc1 where cc1.curator = person_id and curs_curator_id = (select max(curs_curator_id) from curs_curator cc2 where cc2.curator = person_id and cc2.curs = cc1.curs)"
+            sql: "select count(curs) from curs_curator cc1 where cc1.curator = person_id and curs_curator_id = (select max(curs_curator_id) from curs_curator cc2 where cc2.curs = cc1.curs)"
         - name: Approved sessions
           source:
-            sql: "select count(curs) from curs_curator cc1 where cc1.curator = person_id and curs_curator_id = (select max(curs_curator_id) from curs_curator cc2 where cc2.curator = person_id and cc2.curs = cc1.curs) and cc1.curs in (select curs_id from curs where curs_id in (select curs from cursprop p join cvterm t on p.type = t.cvterm_id where t.name = 'annotation_status' and p.value = 'APPROVED'))"
+            sql: "select count(curs) from curs_curator cc1 where cc1.curator = person_id and curs_curator_id = (select max(curs_curator_id) from curs_curator cc2 where cc2.curs = cc1.curs) and cc1.curs in (select curs_id from curs where curs_id in (select curs from cursprop p join cvterm t on p.type = t.cvterm_id where t.name = 'annotation_status' and p.value = 'APPROVED'))"
         - name: password
           editable: 1
           admin_only: 1
@@ -678,7 +762,7 @@ class_info:
         #   editable: 1
         - name: session_status
           source:
-            sql: "select value from curs, cursprop p, cvterm t where me.pub_id = curs.pub and curs.curs_id = p.curs and t.cvterm_id = p.type and t.name = 'annotation_status' AND p.value <> 'EXPORTED'"
+            sql: "select value from curs, cursprop p, cvterm t where me.pub_id = curs.pub and curs.curs_id = p.curs and t.cvterm_id = p.type and t.name = 'annotation_status'"
           editable: 0
         - name: approver_name
           source:
@@ -795,6 +879,9 @@ class_info:
           editable: 1
         - name: curator
           editable: 1
+    strain:
+      class_display_name: Strain
+      editable: 0
     gene:
       editable: 1
       display_field: primary_identifier
@@ -846,6 +933,12 @@ class_info:
     community_curatable_publications:
       extends: pub
       constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Curatable') and pub_id in (select pub from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin')"
+    publications_with_a_community_session:
+      extends: pub
+      constraint: "pub_id in (select pub from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin')"
+    uncuratable_publications_with_a_community_session:
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name <> 'Curatable') and pub_id in (select pub from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin')"
     curated_publications:
       extends: pub
       constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and (p.value = 'NEEDS_APPROVAL' or p.value = 'APPROVAL_IN_PROGRESS' or p.value ='APPROVED')))"
@@ -859,6 +952,38 @@ class_info:
       class_display_name: Sequence feature or region
       extends: pub
       constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Sequence feature or region')"
+    triage_browser_datasets_to_host:
+      class_display_name: Browser datasets, to host
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Browser datasets, to host')"
+    triage_browser_datasets_hosted:
+      class_display_name: Browser datasets, hosted
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Browser datasets, hosted')"
+    triage_dna_replication_related:
+      class_display_name: DNA replication related
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'DNA replication related')"
+    triage_dna_recombination_related:
+      class_display_name: DNA recombination related
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'DNA recombination related')"
+    triage_mitochondrial_sequence_related:
+      class_display_name: Mitochondrial sequence related
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Mitochondrial sequence related')"
+    triage_3d_genome_organization:
+      class_display_name: 3D genome organization
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = '3D genome organization')"
+    triage_transposon_related:
+      class_display_name: Transposon related
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Transposon related')"
+    triage_mating_type_related:
+      class_display_name: Mating-type related
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Mating-type related')"
     triage_not_english_publications:
       class_display_name: Not English
       extends: pub
@@ -927,6 +1052,10 @@ class_info:
       class_display_name: Loaded in error
       extends: pub
       constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Loaded in error')"
+    triage_duplicated_in_pubmed_publications:
+      class_display_name: Duplicated in PubMed
+      extends: pub
+      constraint: "triage_status_id in (select cvterm_id from cvterm where name = 'Duplicated in PubMed')"
     curatable_publications_with_sessions:
       extends: pub
       constraint: "pub_id in (select pub from curs) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable')"
@@ -936,6 +1065,9 @@ class_info:
     curatable_publications_without_sessions:
       extends: pub
       constraint: "pub_id not in (select pub from curs) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable')"
+    curatable_publications_with_corresponding_author_without_sessions:
+      extends: pub
+      constraint: "pub_id not in (select pub from curs) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable') AND corresponding_author IS NOT NULL"
     publications_with_new_sessions:
       extends: pub
       constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and p.value = 'SESSION_CREATED')) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable')"
@@ -952,19 +1084,32 @@ class_info:
       constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and (p.value = 'NEEDS_APPROVAL' or p.value = 'APPROVAL_IN_PROGRESS')))"
     publications_with_approved_session:
       extends: pub
-      constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and p.value = 'APPROVED')) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable')"
+      constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and p.value = 'APPROVED'))"
     curatable_publications_with_no_annotatable_genes:
       extends: pub
       constraint: "pub_id in (select pub from curs where curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and (p.value = 'NEEDS_APPROVAL' or p.value = 'APPROVAL_IN_PROGRESS')) and curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'session_genes_count' and p.value = 0)) and triage_status_id in (select cvterm_id from cvterm where name = 'Curatable')"
     publications_without_corresponding_author:
       extends: pub
       constraint: "corresponding_author is null"
+    all_community_sessions:
+      extends: curs
+      constraint: "me.curs_id IN (select curs from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin' and cc.curs_curator_id = (select max(curs_curator_id) from curs_curator where curs = me.curs_id))"
+    community_sessions_never_sent:
+      extends: curs
+      constraint: "me.curs_id IN (select curs from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin' AND cc.curs NOT IN (select curs from cursprop p, cvterm t where cc.curs = p.curs and t.cvterm_id = p.type and t.name = 'link_sent_to_curator_date'))"
+    community_sessions_not_started_and_never_sent:
+      extends: curs
+      constraint: "me.curs_id IN (select curs from curs_curator cc join curs on curs_id = cc.curs join person on person.person_id = cc.curator join cvterm role on person.role = role.cvterm_id and role.name <> 'admin' AND cc.curs NOT IN (select curs from cursprop p, cvterm t where cc.curs = p.curs and t.cvterm_id = p.type and t.name = 'link_sent_to_curator_date') AND cc.curs IN (select p.curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and p.value = 'SESSION_CREATED'))"
+
     sessions_needing_approval:
       extends: curs
       constraint: "me.curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and (p.value = 'NEEDS_APPROVAL' or p.value = 'APPROVAL_IN_PROGRESS'))"
     sessions_without_a_curator:
       extends: curs
       constraint: "me.curs_id not in (select curs from curs_curator)"
+    exported_sessions:
+      extends: curs
+      constraint: "me.curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and p.value = 'EXPORTED')"
     sessions_with_term_requests:
       extends: curs
       constraint: "me.curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'annotation_status' and (p.value = 'CURATION_IN_PROGRESS' or p.value = 'CURATION_PAUSED' or p.value = 'NEEDS_APPROVAL' or p.value = 'APPROVAL_IN_PROGRESS')) and me.curs_id in (select curs from cursprop p, cvterm t where t.cvterm_id = p.type and t.name = 'session_term_suggestions_count' and value > 0)"
@@ -1143,14 +1288,26 @@ reports:
                    - report: publications_with_approved_session
                    - report: publications_with_multiple_sessions
                 - report: curatable_publications_without_sessions
+                - report: curatable_publications_with_corresponding_author_without_sessions
                 - report: curatable_publications_with_no_annotatable_genes
                 - report: triage_structure_publications
                 - report: triage_phenotype_screen_publications
             - report: curatable_low_priority_publications
             - report: community_curatable_publications
+            - report: publications_with_a_community_session
             - report: uncuratable_publications
               children:
+                - report: uncuratable_publications_with_a_community_session
                 - report: triage_sequence_feature_or_region_publications
+                  children:
+                    - report: triage_browser_datasets_to_host
+                    - report: triage_browser_datasets_hosted
+                    - report: triage_dna_replication_related
+                    - report: triage_dna_recombination_related
+                    - report: triage_mitochondrial_sequence_related
+                    - report: triage_3d_genome_organization
+                    - report: triage_transposon_related
+                    - report: triage_mating_type_related
                 - report: triage_not_english_publications
                 - report: triage_method_or_reagent_publications
                 - report: triage_wrong_organism_publications
@@ -1165,6 +1322,7 @@ reports:
                 - report: triage_biotech_publications
                 - report: triage_database_publications
                 - report: triage_loaded_in_error_publications
+                - report: triage_duplicated_in_pubmed_publications
                 - report: triage_other_publications
             - report: curated_publications
               children:
@@ -1176,6 +1334,10 @@ reports:
         - report: sessions_with_term_requests
         - report: reactivated_sessions
         - report: sessions_without_a_curator
+        - report: exported_sessions
+        - report: all_community_sessions
+        - report: community_sessions_never_sent
+        - report: community_sessions_not_started_and_never_sent
 #        - report: sessions_needing_approval
 #    - report: named_genes
   chado:
@@ -1186,6 +1348,28 @@ export:
   gene_association_fields:
     db: "PomBase"
     assigned_by: "PomBase"
+  canto_json:
+    pub_triage_status_to_export:
+      - Curatable
+      - Browser datasets, to host
+      - Browser datasets, hosted
+      - Method or reagent
+      - Review or comment
+      - Mutagenicity or toxicity study
+      - Biotech
+      - Modelling
+      - Database
+      - 3D genome organization
+      - Phylogeny and evolutionary studies
+      - Cell composition or WT feature
+      - Not physically mapped
+      - Transposon related
+      - Mating-type related
+      - DNA replication related
+      - DNA recombination related
+      - Mitochondrial sequence related
+      - Sequence feature or region
+      - Other
 
 load:
   ontology:
@@ -1221,8 +1405,8 @@ ontology_index_dir: ontology_index
 relationship_ontology_path: etc/ro.obo
 
 external_sources:
-  pubmed_efetch_url: 'http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&retmax=99999&id='
-  pubmed_esearch_url: 'http://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&remode=xml&retmax=99999&term='
+  pubmed_efetch_url: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&retmode=xml&retmax=99999&id='
+  pubmed_esearch_url: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&remode=xml&retmax=99999&term='
 
 implementation_classes:
   gene_adaptor: Canto::Track::GeneLookup
@@ -1230,6 +1414,11 @@ implementation_classes:
   status_adaptor: Canto::Track::StatusStorage
   person_adaptor: Canto::Track::PersonLookup
   pubs_adaptor: Canto::Track::PubsLookup
+  organism_adaptor: Canto::Track::OrganismLookup
+  strain_adaptor: Canto::Track::StrainLookup
+
+wildtype_name_template: '@@gene_display_name@@+'
+deletion_name_template: '@@gene_display_name@@delta'
 
 allele_type_list:
   - name: wild type
@@ -1239,14 +1428,12 @@ allele_type_list:
     allele_name_required: true
     allow_expression_change: true
     expression_required: true
-    autopopulate_name: '@@gene_display_name@@+'
   - name: deletion
     export_type: deletion
     show_description: false
     description_required: false
     allele_name_required: true
     allow_expression_change: false
-    autopopulate_name: '@@gene_display_name@@delta'
   - name: disruption
     name_hint: "e.g. pom1::ura4+"
     export_type: disruption
@@ -1261,30 +1448,46 @@ allele_type_list:
     allele_name_required: true
     allow_expression_change: true
     expression_required: true
-  - name: mutation of single amino acid residue
-    export_type: amino_acid_mutation
-    # all multi and single mutations map to "amino_acid_mutation" in Chado so
-    # we use this to undo that mapping - if the RE matches the description
-    # from Chado then we use this allele type
-    export_type_reverse_map_re: "^[^,]+$"
+  - name: amino acid insertion
+    export_type: amino_acid_insertion
     show_description: true
     description_required: true
     allele_name_required: false
     allow_expression_change: true
     expression_required: true
-    placeholder: eg. K132A
-  - name: mutation of multiple amino acid residues
+    placeholder: e.g. 858-MKGYP
+  - name: "amino acid substitution(s)"
     export_type: amino_acid_mutation
-    # all multi and single mutations map to "amino_acid_mutation" in Chado so
-    # we use this to undo that mapping - if the RE matches the description
-    # from Chado then we use this allele type
-    export_type_reverse_map_re: ","
     show_description: true
     description_required: true
     allele_name_required: false
     allow_expression_change: true
     expression_required: true
-    placeholder: eg. K132A,K144A
+    placeholder: eg. K132A or F256A,F310A
+  - name: amino acid insertion and substitution
+    export_type: amino_acid_insertion_and_mutation
+    show_description: true
+    description_required: true
+    allele_name_required: false
+    allow_expression_change: true
+    expression_required: true
+    placeholder: e.g. 858-MKGYP,F124D
+  - name: amino acid insertion and deletion
+    export_type: amino_acid_insertion_and_deletion
+    show_description: true
+    description_required: true
+    allele_name_required: false
+    allow_expression_change: true
+    expression_required: true
+    placeholder: e.g. 858-MKGYP,100-200
+  - name: partial deletion and amino acid change
+    export_type: amino_acid_deletion_and_mutation
+    show_description: true
+    description_required: true
+    allele_name_required: false
+    allow_expression_change: true
+    expression_required: true
+    placeholder: e.g. 100-200,F124D
   - name: partial deletion, amino acid
     export_type: partial_amino_acid_deletion
     show_description: true
@@ -1293,6 +1496,22 @@ allele_type_list:
     allow_expression_change: true
     expression_required: true
     placeholder: "Please specify deleted residues - eg. 100-200 OR 10-20,40-50"
+  - name: nucleotide insertion
+    export_type: nucleotide_insertion
+    show_description: true
+    description_required: true
+    allele_name_required: false
+    allow_expression_change: true
+    expression_required: true
+    placeholder: e.g. 132-AATTT
+  - name: "nucleotide substitution(s)"
+    export_type: nucleotide_mutation
+    show_description: true
+    description_required: true
+    allele_name_required: false
+    allow_expression_change: true
+    expression_required: true
+    placeholder: eg. A25G, OR A-25G (for promoter region)
   - name: partial deletion, nucleotide
     export_type: partial_nucleotide_deletion
     show_description: true
@@ -1301,26 +1520,6 @@ allele_type_list:
     allow_expression_change: true
     expression_required: true
     placeholder: "Please specify deleted residues - eg. 100-200 OR -20--30 (for promoter region)"
-  - name: mutation of a single nucleotide
-    export_type: nucleotide_mutation
-    # see comment above:
-    export_type_reverse_map_re: "^[^,]+$"
-    show_description: true
-    description_required: true
-    allele_name_required: false
-    allow_expression_change: true
-    expression_required: true
-    placeholder: eg. A25G, OR A-25G (for promoter region)
-  - name: mutation of multiple nucleotides
-    export_type: nucleotide_mutation
-    # see comment above:
-    export_type_reverse_map_re: ","
-    show_description: true
-    description_required: true
-    allele_name_required: false
-    allow_expression_change: true
-    expression_required: true
-    placeholder: eg. A25G,T40G
   - name: nonsense mutation
     export_type: nonsense_mutation
     show_description: true
@@ -1328,7 +1527,7 @@ allele_type_list:
     allow_expression_change: true
     expression_required: true
     allele_name_required: false
-    placeholder: 'e.g. AA123->stop, AA1299->amber'
+    placeholder: 'e.g. aa123->stop, aa1299->amber'
   - name: other
     export_type: other
     show_description: true
@@ -1337,6 +1536,13 @@ allele_type_list:
     allow_expression_change: true
     expression_required: true
     placeholder: Please provide a description
+#  - name: aberration
+#    export_type: aberration
+#    show_description: true
+#    description_required: false
+#    allele_name_required: false
+#    allow_expression_change: false
+#    expression_required: false
 
 evidence_types:
   IMP:
@@ -1509,6 +1715,10 @@ evidence_types:
     non_symmetric_interaction_labels:
       interactor_a: binds activation domain construct with
       interactor_b: binds DNA-binding domain construct with
+  Northern blot: ~
+  Microarray: ~
+  Other transcript expression level assay: ~
+  Western blot: ~
   'Reporter gene assay': ~
   'Enzyme assay data': ~
   'Flow cytometry data': ~
@@ -1526,6 +1736,11 @@ evidence_types:
   'Competitive growth assay evidence': ~
   'Gel electrophoresis evidence': ~
   'Plasmid maintenance assay evidence': ~
+  RNA-sequencing evidence: ~
+  Differential hybridization evidence: ~
+  Expression microarray: ~
+  In situ hybridization evidence used in manual assertion: ~
+  Northern assay: ~
 
 # Configuration that applies to an ontology namespace.  An ontology can
 # be used by more than one annotation_type.  Some (like FYPO_EXT) are
@@ -1533,10 +1748,24 @@ evidence_types:
 # Note: all terms with no parent are tagged with "canto_root_subset" on load
 ontology_namespace_config:
   subsets_to_ignore:
-    primary:
-      - "is_a(canto_root_subset)"
+    primary_autocomplete:
+      - "is_a(Grouping_terms)"
+    primary_select:
+      - "is_a(Grouping_terms)"
+      - "is_a(qc_do_not_annotate)"
     extension:
       - "is_a(canto_root_subset)"
+      - "is_a(qc_do_not_annotate)"
+  do_not_annotate_subsets:
+    - "is_a(canto_root_subset)"
+    - "is_a(qc_do_not_annotate)"
+
+# Namespace used for the phenotype condition ontology. If you
+# use an ontology other than FYECO for your phenotype conditions, then
+# change this to the default namespace of your ontology.
+phenotype_condition_namespace: fission_yeast_phenotype_condition
+
+namespace_term_evidence_codes: {}
 
 available_annotation_type_list:
   - name: molecular_function
@@ -1553,6 +1782,8 @@ available_annotation_type_list:
       - IMP
       - IPI
       - EXP
+    admin_evidence_codes:
+      - ISS
     broad_term_suggestions: >
       transporter, transferase activity
     specific_term_examples: >
@@ -1582,6 +1813,8 @@ available_annotation_type_list:
       - IGI
       - IPI
       - EXP
+    admin_evidence_codes:
+      - ISS
     broad_term_suggestions: >
       cell cycle, transport
     specific_term_examples: >
@@ -1618,6 +1851,8 @@ available_annotation_type_list:
       - IMP
       - IPI
       - EXP
+    admin_evidence_codes:
+      - ISS
     broad_term_suggestions: >
       rough endoplasmic reticulum, nucleus, ribosome
     specific_term_examples: >
@@ -1633,6 +1868,158 @@ available_annotation_type_list:
       proteins or nucleic acids. Cellular component also does not include
       multicellular anatomical terms.
     detailed_help_path: /docs/go_annotation
+  - name: host_phenotype
+    category: ontology
+    namespace: 'host_phenotype'
+    very_short_display_name: 'host phenotype'
+    short_display_name: 'host phenotype'
+    display_name: 'host phenotype'
+    synonyms_to_display:
+      - exact
+    feature_type: 'genotype'
+    feature_subtype: 'host'
+    can_have_conditions: 1
+    evidence_codes:
+      - Cell growth assay
+      - Enzyme assay data
+      - Epitope-tagged protein immunolocalization experiment data
+      - Flow cytometry data
+      - Gel electrophoresis evidence
+      - Immunolocalization experiment data
+      - Microscopy (cellular)
+      - Other
+      - Particle size and count assay
+      - Quantitative PCR
+      - Reporter gene assay
+      - Substance quantification evidence
+      - Transcript expression level evidence
+      - Western blot assay
+      - Macroscopic observation (qualitative observation)
+      - Macroscopic observation (quantitative observation)
+      - Microscopy (subcellular)
+      - Electrophysiology assay
+    broad_term_suggestions: >
+      multinucleate, abnormal spindle, inviable
+    specific_term_examples: >
+      growth auxotrophic for arginine, abnormal cytokinetic cell separation
+    help_text: >
+      Annotate normal or abnormal phenotypes of cells with this genotype.
+    more_help_text: >
+      A phenotype is any observable characteristic or trait of an organism;
+      observable characteristics include morphology, development, biochemical or
+      physiological properties, behaviour, and products of behaviour of the
+      organism. Phenotypes result from the expression of the genes of an organism as well
+      as the influence of environmental factors and the interactions between
+      the two.
+    extra_help_text: >
+      Alleles may be annotated with multiple phenotype terms,
+      including both normal and abnormal phenotypes for one allele.
+    detailed_help_path: /docs/fypo_annotation
+  - name: pathogen_phenotype
+    category: ontology
+    namespace: 'pathogen_phenotype'
+    very_short_display_name: 'pathogen phenotype'
+    short_display_name: 'pathogen phenotype'
+    display_name: 'pathogen phenotype'
+    synonyms_to_display:
+      - exact
+    feature_type: 'genotype'
+    feature_subtype: 'pathogen'
+    can_have_conditions: 1
+    evidence_codes:
+      - Cell growth assay
+      - Competitive growth assay evidence
+      - Enzyme assay data
+      - Epitope-tagged protein immunolocalization experiment data
+      - Flow cytometry data
+      - Gel electrophoresis evidence
+      - Immunolocalization experiment data
+      - Microscopy (cellular)
+      - Other
+      - Particle size and count assay
+      - Quantitative PCR
+      - Reporter gene assay
+      - Substance quantification evidence
+      - Transcript expression level evidence
+      - Western blot assay
+      - Penetration assay
+      - Asexual sporulation assay
+      - Sexual sporulation assay
+      - Macroscopic observation (qualitative observation)
+      - Macroscopic observation (quantitative observation)
+      - Microscopy (subcellular)
+      - Electrophysiology assay
+    broad_term_suggestions: >
+      multinucleate, abnormal spindle, inviable
+    specific_term_examples: >
+      growth auxotrophic for arginine, abnormal cytokinetic cell separation
+    help_text: >
+      Annotate normal or abnormal phenotypes of cells with this genotype.
+    more_help_text: >
+      A phenotype is any observable characteristic or trait of an organism;
+      observable characteristics include morphology, development, biochemical or
+      physiological properties, behaviour, and products of behaviour of the
+      organism. Phenotypes result from the expression of the genes of an organism as well
+      as the influence of environmental factors and the interactions between
+      the two.
+    extra_help_text: >
+      Alleles may be annotated with multiple phenotype terms,
+      including both normal and abnormal phenotypes for one allele.
+    detailed_help_path: /docs/fypo_annotation
+  - name: disease_formation_phenotype
+    category: ontology
+    namespace: disease_formation_phenotype
+    very_short_display_name: 'PHI-phenotype'
+    short_display_name: 'PHI-phenotype'
+    display_name: 'disease formation phenotype'
+    synonyms_to_display:
+      - exact
+    feature_type: 'metagenotype'
+    can_have_conditions: 1
+    evidence_codes:
+      - Cell growth assay
+      - Chromatin immunoprecipitation experiment
+      - Chromatography evidence
+      - Competitive growth assay evidence
+      - Electrophoretic mobility shift assay data
+      - Enzyme assay data
+      - Epitope-tagged protein immunolocalization experiment data
+      - Flow cytometry data
+      - Gel electrophoresis evidence
+      - Immunolocalization experiment data
+      - Microscopy (cellular)
+      - Other
+      - Particle size and count assay
+      - Quantitative PCR
+      - Reporter gene assay
+      - Substance quantification evidence
+      - Transcript expression level evidence
+      - Western blot assay
+      - Functional test in host
+      - Penetration assay
+      - Asexual sporulation assay
+      - Sexual sporulation assay
+      - Macroscopic observation (qualitative observation)
+      - Macroscopic observation (quantitative observation)
+      - Microscopy (subcellular)
+      - Electrophysiology assay
+    broad_term_suggestions: >
+      multinucleate, abnormal spindle, inviable
+    specific_term_examples: >
+      growth auxotrophic for arginine, abnormal cytokinetic cell separation
+    help_text: >
+      Annotate normal or abnormal phenotypes of cells with this genotype.
+    more_help_text: >
+      A phenotype is any observable characteristic or trait of an organism;
+      observable characteristics include morphology, development, biochemical or
+      physiological properties, behaviour, and products of behaviour of the
+      organism. Phenotypes result from the expression of the genes of an organism as well
+      as the influence of environmental factors and the interactions between
+      the two.
+    extra_help_text: >
+      Alleles may be annotated with multiple phenotype terms,
+      including both normal and abnormal phenotypes for one allele.
+    detailed_help_path: /docs/fypo_annotation
   - name: phenotype
     category: ontology
     namespace: fission_yeast_phenotype
@@ -1698,6 +2085,60 @@ available_annotation_type_list:
     evidence_codes:
       - IDA
     detailed_help_path: /docs/modification_annotation
+  - name: wt_rna_expression
+    category: ontology
+    ontology_size: small
+    namespace: PomGeneExRNA
+    display_name: 'wild-type RNA level'
+    feature_type: 'gene'
+    broad_term_suggestions: ~
+    specific_term_examples: ~
+    help_text: Qualitative descriptions of presence, absence, increase, decrease, etc. of the RNA transcribed from a gene.
+    more_help_text: ~
+    annotation_table_columns_to_hide: [term_ontid]
+    evidence_codes:
+      - Differential hybridization evidence
+      - Expression microarray
+      - In situ hybridization evidence used in manual assertion
+      - Northern assay
+      - Quantitative PCR
+      - Reporter gene assay
+      - RNA-sequencing evidence
+    detailed_help_path: /docs/gene_expression
+  - name: wt_protein_expression
+    category: ontology
+    ontology_size: small
+    namespace: PomGeneExProt
+    display_name: 'wild-type Protein level'
+    feature_type: 'gene'
+    broad_term_suggestions: ~
+    specific_term_examples: ~
+    help_text: Qualitative descriptions of presence, absence, increase, decrease, etc. of the protein product of a gene.
+    more_help_text: ~
+    annotation_table_columns_to_hide: [term_ontid]
+    evidence_codes:
+      - Microscopy
+      - Reporter gene assay
+      - Western blot
+    detailed_help_path: /docs/gene_expression
+  - name: genotype_interaction
+    namespace: fission_yeast_phenotype
+    can_have_conditions: 1
+    category: interaction
+    term_suggestions_annotation_type: phenotype
+    display_name: 'genetic interaction'
+    feature_type: 'metagenotype'
+    help_text: 'Examples: synthetic lethality, dosage suppression, phenotype enhancement.'
+    evidence_codes:
+      - Dosage Growth Defect
+      - Dosage Lethality
+      - Dosage Rescue
+      - Phenotypic Enhancement
+      - Phenotypic Suppression
+      - Synthetic Growth Defect
+      - Synthetic Lethality
+      - Synthetic Rescue
+    detailed_help_path: /docs/genetic_interaction_annotation
   - name: genetic_interaction
     category: interaction
     display_name: 'genetic interaction'
@@ -1710,7 +2151,6 @@ available_annotation_type_list:
       - Phenotypic Enhancement
       - Phenotypic Suppression
       - Synthetic Growth Defect
-      - Synthetic Haploinsufficiency
       - Synthetic Lethality
       - Synthetic Rescue
     detailed_help_path: /docs/genetic_interaction_annotation
@@ -1732,9 +2172,38 @@ available_annotation_type_list:
       - PCA
       - Protein-peptide
       - Protein-RNA
+      - Proximity Label-MS
       - Reconstituted Complex
       - Two-hybrid
     detailed_help_path: /docs/physical_interaction_annotation
+  - name: protein_sequence_feature_or_motif
+    category: ontology
+    ontology_size: small
+    namespace: '[SO:0001527]'
+    very_short_display_name: 'protein sequence feature or motif'
+    short_display_name: 'protein sequence feature or motif'
+    display_name: 'protein sequence feature or motif'
+    feature_type: 'gene'
+    evidence_codes:
+      - EXP
+      - ISS
+    broad_term_suggestions: >
+      peptide_localization_signal
+    help_text: >
+      A Protein localization signal is a peptide sub-sequence used to target the protein to a specific organelle.
+
+# restrict the list of annotation types
+enabled_annotation_type_list:
+  - molecular_function
+  - biological_process
+  - cellular_component
+  - phenotype
+  - post_translational_modification
+  - wt_rna_expression
+  - wt_protein_expression
+  - genetic_interaction
+  - physical_interaction
+  - protein_sequence_feature_or_motif
 
 default_curation_priority_name: low
 
@@ -1753,12 +2222,18 @@ help_text:
     inline: >
       Once you have selected a gene to annotate you will be presented with a
       set of annotation options
+  choose_genotype:
+    inline: >
+      Add genotypes (including alleles, expression levels, and optional
+      background) to use in annotating phenotypes. You can add genotypes
+      individually as you go through the paper, or all at once before you
+      start adding phenotype annotations.
   gene_page_choose_curation_type:
     inline: >
       These are the types of data you can annotate. Follow one of the links for more detailed instructions.
   gene_page_single_allele:
     inline: >
-      One or more mutations, or an expression change, in one copy of a gene at one locus.
+      Annotate phenotypes for single mutants (i.e. mutation(s) or expression change in one copy of a gene at one locus). Use "Genotype management" for multi-locus (e.g. double mutant) genotypes and their phenotypes.
     docs_path: "fypo_annotation#single-allele-phenotypes"
   gene_page_multi_allele:
     inline: >
@@ -1792,23 +2267,33 @@ help_text:
   physical_interaction_evidence:
     url: "http://wiki.thebiogrid.org/doku.php/experimental_systems#physical_interactions"
   biological_process_definition:
-    inline: Click for help on biological process
+    inline: Annotate a gene product's role in a process.
     docs_path: "go_annotation#process"
   cellular_component_definition:
-    inline: Click for help on cellular component
+    inline: Annotate the location in a cell where a gene product acts.
     docs_path: "go_annotation#component"
   molecular_function_definition:
-    inline: Click for help on molecular function
+    inline: Annotate a gene product's molecular activity.
     docs_path: "go_annotation#function"
   post_translational_modification_definition:
-    inline: Click for help on modification annotation
+    inline: Annotate the type, position, timing, etc. of covalent protein modifications.
     docs_path: "modification_annotation"
+  wt_rna_expression_definition:
+    inline: Annotate qualitative descriptions for the normal level and timing of RNA expression from a gene.
+    docs_path: "gene_expression"
+  wt_protein_expression_definition:
+    inline: Annotate qualitative descriptions for the normal level and timing of protein expression from a gene.
+    docs_path: "gene_expression"
   physical_interaction_definition:
-    inline: Click for help on physical interaction annotation
+    inline: Annotate interacting gene products and supporting evidence.
     docs_path: "physical_interaction_annotation"
   genetic_interaction_definition:
-    inline: Click for help on genetic interaction annotation
+    inline: Annotate interaction type and interacting genes.
     docs_path: "genetic_interaction_annotation"
+  experimental_conditions_definition:
+    inline: >
+      Conditions are the aspects of the experimental setup that are independent
+      of what cells (strain, genotype, constructs, etc.) are used.
 
 contact_email:
   address: "contact@phi-base.org"
@@ -1832,8 +2317,8 @@ external_links:
       url: 'http://www.ncbi.nlm.nih.gov/entrez/query.fcgi?cmd=Retrieve&db=PubMed&dopt=Abstract&list_uids=@@uniquename@@'
 
 webservices:
-  uniprot_batch_lookup_url: 'http://www.uniprot.org/batch/'
-  quickgo_annotation_lookup_url: 'http://www.ebi.ac.uk/QuickGO/GAnnotation?format=gaf&ref='
+  uniprot_batch_lookup_url: 'https://www.uniprot.org/uniprot/?format=xml&query='
+  quickgo_annotation_lookup_url: 'https://www.ebi.ac.uk/QuickGO/services/annotation/downloadSearch?downloadLimit=1000&reference='
 
 config_service:
   # settings visible via the config web service
@@ -1849,14 +2334,24 @@ config_service:
     instance_organism: 1
     extension_configuration: 1
     max_term_name_select_count: 1
+    show_quick_deletion_buttons: 1
+    pathogen_host_mode: 1
+    phenotype_condition_namespace: 1
+    multi_organism_mode: 1
     help_text: 1
     public_mode: 1
+    ontology_namespace_config: 1
+    wildtype_name_template: 1
+    deletion_name_template: 1
+    allele_note_types: 1
 
 max_term_name_select_count: 20
 
 curs_settings_service:
   allowed_keys:
     annotation_mode: 1
+    message_for_curators: 1
+    paused_message: 1
   allowed_data_keys:
     checked: 1
 
@@ -1888,6 +2383,8 @@ ontology_external_links:
       url: 'http://bioportal.bioontology.org/ontologies/FYPO?p=classes&conceptid=http%3A%2F%2Fpurl.obolibrary.org%2Fobo%2F@@term_ont_id:s/:/_/r@@#visualization'
 
 chado:
+  ignore_case_in_gene_query: 1
+
   ontology_cv_names:
     post_translational_modification: PSI-MOD
     phenotype: fission_yeast_phenotype
@@ -1896,6 +2393,10 @@ chado:
 # feature_cvterms with these evidence code will be ignored
     evidence_codes_to_ignore:
       - TAS
+
+gene_lookup:
+# in Chado and TrackDB lookups, query by name as well as ID if this is 1/true:
+  query_by_name: 1
 
 curator_manager:
   accept_hooks:
@@ -1932,6 +2433,12 @@ curs_config:
   follow_inverse_cv_names:
     - fission_yeast_phenotype
 
+  # Help text shown above the experimental conditions picker
+  experimental_conditions_help_text: ~
+
+  # A message for curators, shown at the top of the gene confirmation page.
+  # gene_page_top_message: SET_ME
+
   finish_form:
     # the "extra_text" is always shown on the finish form, the
     # extra_text_gene_information is only shown if the user added some genes to
@@ -1960,7 +2467,18 @@ curs_config:
   genotype_config:
     default_strain_name: 'h+'
 
-canto_demo_url: "http://curation.pombase.org/demo"
+canto_demo_url: "https://curation.pombase.org/demo"
+
+extra_sponsors: []
+
+
+# A list of organisms that are treated as host species in Pathogen-Host mode.
+# The organisms need to be in the organism table.
+# If this list has any elements, the pathogen_host_mode config item is
+# automatically set to 1 and host_organisms will be set to a list the Organism
+# objects.  multi_organism_mode is also set to 1/true.
+host_organism_taxonids: []
+
 
 cache:
   default_timeout: "2 hours"
@@ -1976,7 +2494,7 @@ default_db_name: "CONFIGURE_IN_CANTO_DEPLOY.YAML"
 #
 # ontology_namespace_config:
 #   subsets_to_ignore:
-#     primary:
+#     primary_autocomplete:
 #       - is_a(canto_root_subset)
 #       - is_a(qc_do_not_annotate)
 #       - is_a(gocheck_do_not_annotate)

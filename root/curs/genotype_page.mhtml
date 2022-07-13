@@ -6,7 +6,7 @@ $annotation_count
 @annotation_type_list
 </%args>
 
-<div ng-controller="GenotypeViewCtrl" ng-init="init(<% $annotation_count %>)">
+<div ng-controller="GenotypeViewCtrl" ng-init="init(<% $annotation_count %>,  '<% $org_details->{pathogen_or_host} %>')">
 % if (!$read_only_curs) {
 <div class="curs-box curs-half-width-section">
   <div class="curs-box-title">
@@ -25,15 +25,18 @@ Actions
       <a title="<% $title %>" href="<% $action_path %>">
 %   }
       <span class="annotation-type">
-Add a new <% $type_display_name %> for this genotype ...
+Add a new <% $type_display_name %> for this genotype
       </span>
 %   if (!$annotation_type->{disabled}) {
       </a>
 %   }
+    <span class="curs-annotation-quick-add" ng-show="advancedMode()">
       <annotation-quick-add annotation-type-name="<% $annotation_type->{name} %>"
                             feature-type="genotype" feature-id="<% $genotype->genotype_id() %>"
-                            feature-display-name="<% $genotype->display_name() %>">
+                            feature-display-name="<% $genotype->display_name($c->config()) %>"
+                            feature-taxon-id="<% $genotype->organism()->taxonid() %>">
       </annotation-quick-add>
+    </span>
     </li>
 % }
   </ul>
@@ -67,6 +70,14 @@ Background
         </tr>
         <tr>
           <td class="title">
+Comment
+          </td>
+          <td>
+<% $genotype->comment() || '' |n %>
+          </td>
+        </tr>
+        <tr>
+          <td class="title">
 Description
           </td>
           <td>
@@ -77,14 +88,20 @@ Description
     </table>
 
 % for my $allele ($genotype->alleles()) {
-<% $_unicode_allele_symbol->($allele->display_name()) |n %>
+<% $_unicode_allele_symbol->($allele->display_name($c->config())) |n %>
 %   if ($allele->expression()) {
 -     <i><% $allele->expression() %></i>
 %   }
+%   if ($allele->gene()) {
  - <a href="<% $gene_view_url . $allele->gene()->gene_id() . ($read_only_curs ? '/ro' : '') %>">
      <span>
        <% $_proxy_gene->($allele->gene())->display_name() %>
      </span>
+%   } else {
+%     if ($allele->type() =~ /aberration/) {
+     - <% $allele->type() %>
+%     }
+%   }
    </a>
    <br/>
 % }
@@ -93,10 +110,10 @@ Description
     <div>
       <a confirm="This genotype has existing annotations.  Really edit?"
          confirm-if="annotationCount > 0"
-         ng-click="editGenotype(<% $genotype->genotype_id() %>)">Edit ...</a>
+         ng-click="editGenotype(<% $genotype->genotype_id() %>)">Edit</a>
     </div>
     <div>
-      <a href="<% $start_path . '/genotype_manage#/duplicate/' . $genotype->genotype_id() %>">Duplicate ...</a>
+      <a href="<% $duplicate_url %>">Duplicate</a>
     </div>
 % }
   </div>
@@ -104,11 +121,10 @@ Description
 
 <div class="clearall"/>
 
-<button type="button" ng-click="backToGenotypes()"
-        class="btn btn-primary curs-back-button">&lt;- Back to genotypes</button>
+<genotype-and-summary-nav role="<% $genotype->genotype_type($c->config()) %>"></genotype-and-summary-nav>
 
 <annotation-table-list feature-type-filter="genotype" feature-id-filter="<% $genotype_id %>"
-                       feature-filter-display-name="<% $genotype->display_name() %>"></annotation-table-list>
+                       feature-filter-display-name="<% $genotype->display_name($c->config()) %>"></annotation-table-list>
 
 </div>
 
@@ -117,12 +133,42 @@ my $genotype_id = $genotype->genotype_id();
 
 my $st = $c->stash();
 
+my $pathogen_host_mode = $st->{pathogen_host_mode};
+
+my $organism_lookup = Canto::Track::get_adaptor($c->config(), 'organism');
+
+my $org_details = $organism_lookup->lookup_by_taxonid($genotype->organism()->taxonid());
+
 my @types_to_show = grep {
-  $_->{feature_type} eq 'genotype'
+  my $annotation_type = $_;
+
+  if ($annotation_type->{feature_type} eq 'genotype') {
+    if ($pathogen_host_mode && $annotation_type->{feature_subtype}) {
+      $annotation_type->{feature_subtype} eq $org_details->{pathogen_or_host};
+    } else {
+      1;
+    }
+  } else {
+    0;
+  }
 } @annotation_type_list;
 
 my $start_path = $c->stash()->{curs_root_uri};
 my $read_only_curs = $c->stash()->{read_only_curs};
+
+my $manage_path = 'genotype_manage';
+
+if ($org_details->{pathogen_or_host}) {
+  if ($org_details->{pathogen_or_host} eq 'host') {
+    $manage_path = "host_$manage_path";
+  } else {
+    if ($org_details->{pathogen_or_host} eq 'pathogen') {
+      $manage_path = "pathogen_$manage_path";
+    }
+  }
+}
+
+my $duplicate_url = $start_path . "/$manage_path#/duplicate/" . $genotype->genotype_id();
 
 my $_proxy_gene = sub {
   return Canto::Curs::GeneProxy->new(config => $c->config(),
@@ -130,7 +176,7 @@ my $_proxy_gene = sub {
 
 };
 
-my $nowrap_allele_string = $genotype->allele_string() || '[none]';
+my $nowrap_allele_string = $genotype->allele_string($c->config()) || '[none]';
 
 use Canto::WebUtil;
 

@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 24;
+use Test::More tests => 25;
 use Test::Deep;
 
 use Canto::TestUtil;
@@ -31,15 +31,17 @@ $schema->txn_do(
 my $genotype = $schema->resultset('Genotype')->find({ identifier => 'aaaa0007-genotype-test-1' });
 my @genotype_annotations = $genotype->annotations();
 
+is ($genotype->display_name($config), "SPCC63.05delta ssm4KE");
+
 is (@genotype_annotations, 1);
 
 my $genotype_0 = ($genotype_annotations[0]->genotypes())[0];
 
 my @alleles_0 =
   sort {
-    $a->long_identifier()
+    $a->long_identifier($config)
       cmp
-    $b->long_identifier()
+    $b->long_identifier($config)
   } $genotype_0->alleles();
 
 cmp_deeply(
@@ -70,8 +72,8 @@ cmp_deeply(
       description => $_->description(),
       expression => $_->expression(),
       name => $_->name(),
-      long_identifier => $_->long_identifier(),
-      display_name => $_->display_name()
+      long_identifier => $_->long_identifier($config),
+      display_name => $_->display_name($config)
     };
   } @alleles_0]);
 
@@ -95,9 +97,9 @@ is ($spbc1826_01c->all_annotations(include_with => 1)->count(), 1);
 
 my $spcc63_05 = $schema->find_with_type('Gene',
                                { primary_identifier => 'SPCC63.05' });
-is ($spcc63_05->direct_annotations()->count(), 3);
+is ($spcc63_05->direct_annotations()->count(), 2);
 is ($spcc63_05->indirect_annotations()->count(), 0);
-is ($spcc63_05->all_annotations(include_with => 1)->count(), 3);
+is ($spcc63_05->all_annotations(include_with => 1)->count(), 2);
 
 my $annotation_1_id = $spcc63_05->all_annotations(include_with => 1)->first()->annotation_id();
 

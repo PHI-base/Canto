@@ -14,7 +14,7 @@ their publications for inclusion in public biological databases. Originally
 created for the fission yeast community, Canto is a generic
 tool that can be readily configured for use with other organisms and other
 databases.
-<span class="curs-contact-page-link"><& contact.mhtml, link_text => 'Questions? Contact the Canto team ...' &></span>
+<span class="curs-contact-page-link"><& contact.mhtml, link_text => 'Questions? Contact the Canto team...' &></span>
           </p>
         </div>
         <div class="col-md-4">
@@ -29,38 +29,58 @@ databases.
       <div class="col-md-6">
         <h3>Canto in Use</h3>
         Canto is currently deployed for:
-        <ul>
+        <ul class="canto-other-instances">
           <li>
-  <a href="http://curation.pombase.org/pombe" class="btn btn-primary visit">Visit ...</a>
+  <a href="https://curation.pombase.org/pombe" class="btn btn-primary visit">Visit...</a>
   <span class="organism-name">Schizosaccharomyces pombe</span> (fission yeast)
   at PomBase.
   Curate GO, phenotypes, interactions, protein modifications for inclusion in
   <a href="http://www.pombase.org">PomBase</a>
           </li>
           <li>
-  <a href="http://curation.pombase.org/kpas" class="btn btn-primary visit">Visit ...</a>
-  <span class="organism-name">Komagataella pastoris</span> (formerly known as Pichia pastoris)
+  <a href="https://demo-canto.phi-base.org/" class="btn btn-primary visit">Visit ...</a>
+  <span>In collaboration with Rothamsted Research (<a href="http://www.phi-base.org">PHI-base</a>), we have
+  extended Canto to enable the curation of multiple strains in a
+  single Canto instance, and to curate pathogen-host interaction
+  (multispecies) phenotypes and genotypes.</span>
           </li>
           <li>
-  <a href="http://curation.pombase.org/uniprot" class="btn btn-primary visit">Visit ...</a>
+  <a href="https://www.flybase.org">FlyBase</a> uses a Canto instance extended and
+  configured to support <i>Drosophila</i> phenotype and genetic interaction annotation
+          </li>
+          <li>
+  <a href="https://curation.pombase.org/japonicus" class="btn btn-primary visit">Visit...</a>
+  We have implemented Canto to support community curation of the emerging model
+  <i>Schizosaccharomyces japonicus</i>
+          </li>
+          <li>
+  <a href="https://seaphages.org/">SEA-PHAGES</a> use Canto as part of a
+  discovery-based undergraduate research course (Ivan Erril, UMBC)
+          </li>
+          <li>
+  <a href="https://curation.pombase.org/uniprot" class="btn btn-primary visit">Visit...</a>
   <span>Generic Gene Ontology Implementation: Curate GO annotations for proteins,
-  using UniProtKB identifiers.</span>
+  using UniProtKB identifiers</span>
+          </li>
+          <li>
+  <a href="https://curation.pombase.org/kpas" class="btn btn-primary visit">Visit...</a>
+  <span class="organism-name">Komagataella pastoris</span> (formerly known as Pichia pastoris)
           </li>
         </ul>
       </div>
 
       <div class="col-md-6">
         <h3>Documentation</h3>
-        <a href="<% $c->uri_for('/docs/index/') %>" class="btn btn-primary visit">View ...</a>
+        <a href="<% $c->uri_for('/docs/index/') %>" class="btn btn-primary visit">View...</a>
         <p>
 Instructions for using Canto are available from
 the <a href="<% $c->uri_for('/docs/index/') %>">documentation
-pages</a>, or via the "Help" link at the top right of every Canto instance.
+pages</a>, or via the "Help" link at the top right of every Canto instance
         <h3>Demo</h3>
-          <a href="<% $demo_url %>" class="btn btn-primary visit">Demo ...</a>
+          <a href="<% $demo_url %>" class="btn btn-primary visit">Demo...</a>
         <p>
 Try the <a href="<% $demo_url %>">demo</a>
-version of Canto: curate GO, phenotypes, interactions and protein modifications.
+version of Canto: curate GO, phenotypes, interactions and protein modifications
         </p>
 
       </div>
@@ -80,13 +100,13 @@ curation. <em>Bioinformatics</em> (2014) <a href="http://doi.org/10.1093/bioinfo
 
       <div class="col-md-6">
         <h3>Get The Code</h3>
-        <a href="https://github.com/pombase/canto" class="btn btn-primary visit">Visit ...</a>
+        <a href="https://github.com/pombase/canto" class="btn btn-primary visit">Visit...</a>
         <p>
 Canto is a free, open source application. The source code is
 available from Github.
         </p>
         <p>
-There is <a href="http://curation.pombase.org/docs/canto_admin">documentation</a>
+There is <a href="https://curation.pombase.org/docs/canto_admin">documentation</a>
 for local installation and administration.
         </p>
         <p>
@@ -103,10 +123,10 @@ Canto is a <a href="http://gmod.org/wiki/Canto">component</a> of <a href="http:/
 Canto is developed as part of the PomBase project, which provides a model
 organism database for the fission yeast
 <span class="organism-name">Schizosaccharomyces pombe</span>. PomBase is
-funded by the <a href="http://www.wellcome.ac.uk/">Wellcome Trust</a> and is
+funded by the <a href="http://www.wellcome.ac.uk/">Wellcome Trust</a>,
 run by a consortium comprising the <a href="http://www.cam.ac.uk/">University
-of Cambridge</a>, the <a href="http://www.ebi.ac.uk/">European
-Bioinformatics Institute</a> and <a href="http://www.ucl.ac.uk/">University College London</a>.
+of Cambridge</a> and <a href="http://www.ucl.ac.uk/">University College London</a>,
+and hosted by the <a href="https://www.babraham.ac.uk/">Babraham Institute</a>.
       </p>
     </div>
     <div class="col-md-4">

@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 14;
+use Test::More tests => 13;
 use Package::Alias Tools => 'Canto::Controller::Tools';
 use LWP::Protocol::PSGI;
 use Plack::Test;
@@ -11,17 +11,20 @@ use POSIX qw/strftime/;
 use Canto::TestUtil;
 use Canto::Curs::State qw/:all/;
 
+use Canto::Track::LoadUtil;
+
 my $test_util = Canto::TestUtil->new();
 $test_util->init_test('curs_annotations_2');
 
 my $track_schema = $test_util->track_schema();
+my $load_util = Canto::Track::LoadUtil->new(schema => $track_schema);
 my $config = $test_util->config();
 
 
 my $db_pubmedid = 'PMID:7518718';
 
 my ($pub, $message) =
-  Tools::_load_one_pub($config, $track_schema, $db_pubmedid);
+  $load_util->load_pub_from_pubmed($config, $db_pubmedid);
 
 # known - in the test database
 ok (defined $pub);
@@ -50,7 +53,7 @@ LWP::Protocol::PSGI->register($app);
 my $extern_pubmedid = 'PMID:18910671';
 
 ($pub, $message) =
-  Tools::_load_one_pub($config, $track_schema, $extern_pubmedid);
+  $load_util->load_pub_from_pubmed($config, $extern_pubmedid);
 
 # unknown - fetch from PubMed (or from a file in our case)
 ok (defined $pub);
@@ -102,16 +105,10 @@ sub do_export_approved {
 
 my $content_1 = do_export_approved();
 my $content_1_parsed = decode_json($content_1);
-is (keys %{$content_1_parsed->{curation_sessions}}, 1);
+is (keys %{$content_1_parsed->{curation_sessions}}, 2);
 
 # slight anomaly, the status is the pre-export status
 is ($content_1_parsed->{curation_sessions}->{aaaa0007}->{metadata}->{annotation_status}, 'APPROVED');
-
-my $content_2 = do_export_approved();
-my $content_2_parsed = decode_json($content_2);
-# should be no results as the sessions are already exported
-is (keys %{$content_2_parsed->{curation_sessions}}, 0);
-
 
 
 my $aaaa0006_schema = Canto::Curs::get_schema_for_key($config, 'aaaa0006');
@@ -135,7 +132,7 @@ like($daily_summary_text, qr/activity for $test_date/);
 like($daily_summary_text, qr|Sessions created on \d+-\d+-\d+ with no curator\s+$app_prefix/curs/$new_curs_key\s+$pmid\s+"SUMOylation is required for normal|);
 
 my $curator_manager = Canto::Track::CuratorManager->new(config => $config);
-$curator_manager->set_curator('aaaa0007', 'val@sanger.ac.uk');
+$curator_manager->set_curator('aaaa0007', 'val@3afaba8a00c4465102939a63e03e2fecba9a4dd7.ac.uk');
 $curator_manager->accept_session('aaaa0007');
 
 $daily_summary_text =

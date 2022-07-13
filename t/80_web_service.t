@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 35;
+use Test::More tests => 38;
 use Test::Deep;
 
 use Canto::TestUtil;
@@ -54,15 +54,15 @@ test_psgi $app, sub {
       die "$@\n", $res->content();
     }
 
-    # root terms aren't returned
-    is (@$obj, 0);
+    is (@$obj, 1);
+    ok(grep { $_->{id} =~ /GO:0003674/ } @$obj);
   }
 
-  # test "phenotype_condition" which is an ontology but not an
+  # test "fission_yeast_phenotype_condition" which is an ontology but not an
   # annotation type
   {
-    my $search_term = 'gl';
-    my $url = "http://localhost:5000/ws/lookup/ontology/phenotype_condition/?term=$search_term";
+    my $search_term = 'glu';
+    my $url = "http://localhost:5000/ws/lookup/ontology/fission_yeast_phenotype_condition/?term=$search_term";
     my $req = HTTP::Request->new(GET => $url);
     my $res = $cb->($req);
 
@@ -74,15 +74,16 @@ test_psgi $app, sub {
       die "$@\n", $res->content();
     }
 
-    is (@$obj, 2);
-    ok(grep { $_->{id} =~ /PECO:0000137/ } @$obj);
-    ok(grep { $_->{name} =~ /glucose rich medium/ } @$obj);
-    ok(grep { $_->{annotation_namespace} =~ /phenotype_condition/ } @$obj);
+    is (@$obj, 1);
+
+    ok(grep { $_->{id} =~ /FYECO:0000012/ } @$obj);
+    ok(grep { $_->{name} =~ /standard glucose rich medium/ } @$obj);
+    ok(grep { $_->{annotation_namespace} =~ /fission_yeast_phenotype_condition/ } @$obj);
   }
 
-  # test getting all "phenotype_condition" terms
+  # test getting all "fission_yeast_phenotype_condition" terms
   {
-    my $url = "http://localhost:5000/ws/lookup/ontology/phenotype_condition/?term=:ALL:";
+    my $url = "http://localhost:5000/ws/lookup/ontology/fission_yeast_phenotype_condition/?term=:ALL:";
     my $req = HTTP::Request->new(GET => $url);
     my $res = $cb->($req);
 
@@ -94,11 +95,11 @@ test_psgi $app, sub {
       die "$@\n", $res->content();
     }
 
-    is (@$obj, 9);
+    is (@$obj, 6);
 
-    ok(grep { $_->{id} =~ /PECO:0000137/ } @$obj);
-    ok(grep { $_->{name} =~ /glucose rich medium/ } @$obj);
-    ok(grep { $_->{annotation_namespace} =~ /phenotype_condition/ } @$obj);
+    ok(grep { $_->{id} =~ /FYECO:0000012/ } @$obj);
+    ok(grep { $_->{name} =~ /standard glucose rich medium/ } @$obj);
+    ok(grep { $_->{annotation_namespace} =~ /fission_yeast_phenotype_condition/ } @$obj);
   }
 
   # add the closure subsets: cvtermprops with type 'canto_subset'
@@ -133,6 +134,10 @@ test_psgi $app, sub {
 
     cmp_deeply(\@res,
                [
+                 {
+                   'name' => 'cytoplasmic membrane-bounded vesicle',
+                   'id' => 'GO:0016023',
+                 },
                  {
                    'name' => 'nucleocytoplasmic transporter activity',
                    'id' => 'GO:0005487'
@@ -170,12 +175,12 @@ test_psgi $app, sub {
       die "$@\n", $res->content();
     }
 
-    is ($obj->{count}, 5);
+    is ($obj->{count}, 6);
   }
 
   # test counting a subset, in extension_lookup mode - uses subsets to ignore
   # from $config->{ontology_namespace_config}{subsets_to_ignore}{extension}
-  # instead of ...{primary}
+  # instead of ...{primary_autocomplete}
   {
     my $url = "http://localhost:5000/ws/lookup/ontology/$two_term_subset/?term=:COUNT:&extension_lookup=1";
     my $req = HTTP::Request->new(GET => $url);
@@ -249,8 +254,24 @@ test_psgi $app, sub {
     }
 
     is ($obj->{status}, 'success');
-    is ($obj->{details}->{email}, 'val@sanger.ac.uk');
+    is ($obj->{details}->{email}, 'val@3afaba8a00c4465102939a63e03e2fecba9a4dd7.ac.uk');
     is ($obj->{details}->{is_admin}, JSON::true);
+  }
+
+  {
+    my $url = "http://localhost:5000/ws/canto_config/pathogen_host_mode";
+    my $req = HTTP::Request->new(GET => $url);
+    my $res = $cb->($req);
+
+    is $res->code, 200;
+
+    my $obj;
+    eval { $obj = decode_json($res->content()); };
+    if ($@) {
+      die "$@\n", $res->content();
+    }
+
+    ok(!$obj->{value});
   }
 };
 

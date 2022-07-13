@@ -112,10 +112,38 @@ sub lookup_by_synonym_rs
 
   my @lc_search_terms = map { lc } @{$search_terms_ref};
 
+  my @synonym_constraint;
+
+  if ($self->config()->{chado}->{ignore_case_in_gene_query}) {
+    @synonym_constraint = _build_synonym_constraint(@lc_search_terms);
+  } else {
+    @synonym_constraint = map { { 'me.name' => $_ } } @{$search_terms_ref};
+  }
+
   return $self->schema()->resultset('Synonym')
-    ->search([_build_synonym_constraint(@lc_search_terms)])
+    ->search([@synonym_constraint])
     ->search_related('feature_synonyms')
     ->search_related('feature', {}, { prefetch => 'organism' });
+}
+
+sub get_organism_resultset
+{
+  my $self = shift;
+  my $scientific_name = shift;
+
+  my ($genus, $species) = split / /, $scientific_name;
+
+  return $self->schema()->resultset('Organism')
+    ->search({ genus => $genus,
+               species => $species });
+}
+
+sub synonyms_of_gene_rs
+{
+  my $self = shift;
+  my $gene = shift;
+
+  return $gene->synonyms()->search({}, { columns => [ 'name' ], distinct => 1 });
 }
 
 with 'Canto::Role::TaxonIDLookup';

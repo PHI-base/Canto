@@ -42,6 +42,9 @@ use Canto::Track;
 use Canto::ExtensionUtil;
 use Canto::Track;
 
+use Canto::Curs::AlleleManager;
+use Canto::Curs::GenotypeManager;
+
 has config => (is => 'ro', required => 1);
 
 my %procs = (
@@ -248,6 +251,484 @@ EOF
 
   },
 
+  16 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+    my $load_util = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $dbh->do("CREATE TABLE strains (
+       organism_id integer NOT NULL REFERENCES organism (organism_id),
+       strain_name text NOT NULL);");
+  },
+
+  17 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("ALTER TABLE organism ADD COLUMN pathogen_or_host TEXT default 'unknown' NOT NULL;");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  18 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+      my $curs_key = $curs->curs_key();
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+      $curs_dbh->do("CREATE TABLE organism_temp(organism_id, taxonid)");
+      $curs_dbh->do("INSERT INTO organism_temp SELECT organism_id, taxonid FROM organism");
+      $curs_dbh->do("DROP TABLE organism");
+      $curs_dbh->do("ALTER TABLE organism_temp RENAME TO organism");
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  19 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+    my $load_util = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $dbh->do("PRAGMA foreign_keys = OFF");
+    $dbh->do("DROP TABLE strains");
+    $dbh->do("CREATE TABLE strain (
+       organism_id integer NOT NULL REFERENCES organism (organism_id),
+       strain_name text NOT NULL);
+      ");
+  },
+
+  20 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+      my $curs_key = $curs->curs_key();
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+      $curs_dbh->do("CREATE TABLE organism_temp(organism_id INTEGER PRIMARY KEY, taxonid INTEGER NOT NULL)");
+      $curs_dbh->do("INSERT INTO organism_temp SELECT organism_id, taxonid FROM organism");
+      $curs_dbh->do("DROP TABLE organism");
+      $curs_dbh->do("ALTER TABLE organism_temp RENAME TO organism");
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  21 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+      my $curs_key = $curs->curs_key();
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("
+CREATE TABLE metagenotype (
+       metagenotype_id integer PRIMARY KEY AUTOINCREMENT,
+       identifier text UNIQUE NOT NULL,
+       pathogen_genotype_id integer NOT NULL REFERENCES genotype(genotype_id),
+       host_genotype_id integer NOT NULL REFERENCES genotype(genotype_id)
+);");
+
+      $curs_dbh->do("
+CREATE TABLE metagenotype_annotation (
+       metagenotype_annotation_id integer PRIMARY KEY,
+       metagenotype integer REFERENCES metagenotype(metagenotype_id),
+       annotation integer REFERENCES annotation(annotation_id)
+);
+");
+
+      $curs_dbh->do("
+ALTER TABLE genotype ADD COLUMN organism_id integer REFERENCES organism(organism_id);");
+
+      $curs_dbh->do("
+UPDATE genotype SET organism_id =
+   (SELECT gene.organism FROM gene
+      JOIN allele ON allele.gene = gene.gene_id
+      JOIN allele_genotype on allele.allele_id = allele_genotype.allele
+     WHERE allele_genotype.genotype = genotype.genotype_id limit 1);
+")
+    };
+
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  22 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $dbh->do("PRAGMA foreign_keys = OFF");
+    $dbh->do("ALTER TABLE organism RENAME TO organism_temp;");
+    $dbh->do("CREATE TABLE organism (
+       organism_id integer NOT NULL PRIMARY KEY,
+       abbreviation varchar(255) null,
+       scientific_name varchar(255) NOT NULL,
+       common_name varchar(255) null,
+       comment text null);
+    ");
+    $dbh->do(qq{
+       INSERT INTO organism(organism_id, abbreviation, scientific_name, common_name, comment)
+       SELECT organism_id, abbreviation, genus || " " || species, common_name, comment FROM organism_temp;
+    });
+    $dbh->do("DROP TABLE organism_temp;");
+    $dbh->do("PRAGMA foreign_keys = ON");
+  },
+
+  23 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+    my $load_util = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $dbh->do("PRAGMA foreign_keys = OFF");
+    $dbh->do(<<"EOF");
+CREATE TABLE strain_temp (
+       strain_id integer NOT NULL PRIMARY KEY,
+       organism_id integer NOT NULL REFERENCES organism (organism_id),
+       strain_name text NOT NULL
+);
+EOF
+
+    $dbh->do("INSERT INTO strain_temp(organism_id, strain_name) " .
+             "SELECT organism_id, strain_name FROM strain");
+
+    $dbh->do("DROP TABLE strain");
+    $dbh->do("ALTER TABLE strain_temp RENAME TO strain");
+
+    $dbh->do("CREATE INDEX strain_organism_index_idx ON strain(organism_id)");
+
+    $dbh->do("PRAGMA foreign_keys = ON");
+  },
+
+  24 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+
+      $curs_dbh->do("DROP TABLE if exists genotype_temp ");
+
+      $curs_dbh->do("CREATE TABLE strain (
+       strain_id integer PRIMARY KEY AUTOINCREMENT,
+       organism_id integer REFERENCES organism(organism_id),
+       -- ID of the strain in the TrackDB:
+       track_strain_id integer UNIQUE,
+       strain_name text
+)");
+
+      $curs_dbh->do("CREATE TABLE genotype_temp(
+         genotype_id integer PRIMARY KEY AUTOINCREMENT,
+         identifier text UNIQUE NOT NULL,
+         background text,
+         strain_id integer REFERENCES strain(strain_id),
+         organism_id integer REFERENCES organism(organism_id),
+         name text UNIQUE
+)");
+      $curs_dbh->do("INSERT INTO genotype_temp
+         SELECT genotype_id, identifier, background, null, organism_id, name
+         FROM genotype");
+
+      $curs_dbh->do("DROP TABLE genotype");
+
+      $curs_dbh->do("ALTER TABLE genotype_temp RENAME TO genotype");
+
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+    };
+
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  25 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+
+      $curs_dbh->do("DROP TABLE if exists allele_temp");
+
+      $curs_dbh->do("CREATE TABLE allele_temp (
+       allele_id integer PRIMARY KEY,
+       primary_identifier text NOT NULL UNIQUE,
+       type text NOT NULL,  -- 'deletion', 'partial deletion, nucleotide' etc.
+       description text,
+       expression text,
+       name text,
+       gene integer REFERENCES gene(gene_id))");
+
+      $curs_dbh->do("INSERT INTO allele_temp
+         SELECT allele_id, primary_identifier, type, description,
+                expression, name, gene
+         FROM allele");
+
+      $curs_dbh->do("DROP TABLE allele");
+
+      $curs_dbh->do("ALTER TABLE allele_temp RENAME TO allele");
+
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  26 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+
+      $curs_dbh->do("DROP TABLE if exists genotype_temp");
+
+      $curs_dbh->do("CREATE TABLE genotype_temp (
+       genotype_id integer PRIMARY KEY AUTOINCREMENT,
+       identifier text UNIQUE NOT NULL,
+       background text,
+       comment text,
+       strain_id integer REFERENCES strain(strain_id),
+       organism_id integer REFERENCES organism(organism_id),
+       name text UNIQUE)");
+
+      $curs_dbh->do("INSERT INTO genotype_temp
+         SELECT genotype_id, identifier, background, null, strain_id, organism_id, name
+         FROM genotype");
+
+      $curs_dbh->do("DROP TABLE genotype");
+
+      $curs_dbh->do("ALTER TABLE genotype_temp RENAME TO genotype");
+
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  27 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("
+CREATE TABLE allelesynonym (
+       allelesynonym integer PRIMARY KEY,
+       allele integer REFERENCES allele(allele_id),
+       edit_status text NOT NULL, -- 'existing', 'new', 'deleted'
+       synonym text NOT NULL
+);
+      ");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  28 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("
+CREATE TABLE diploid (
+       diploid_id integer PRIMARY KEY,
+       name text UNIQUE
+);
+       ");
+
+      $curs_dbh->do("ALTER TABLE allele_genotype ADD COLUMN diploid integer REFERENCES diploid(diploid_id);");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  29 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("ALTER TABLE allele ADD COLUMN comment text;");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  30 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+      my $curs_key = $curs->curs_key();
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("PRAGMA foreign_keys = OFF");
+
+      $curs_dbh->do("DROP TABLE if exists metagenotype_temp");
+
+      $curs_dbh->do("
+CREATE TABLE metagenotype_temp (
+       metagenotype_id integer PRIMARY KEY AUTOINCREMENT,
+       identifier text UNIQUE NOT NULL,
+       type TEXT NOT NULL CHECK(type = 'pathogen-host' OR type = 'interaction'),
+       first_genotype_id integer NOT NULL REFERENCES genotype(genotype_id),
+       second_genotype_id integer NOT NULL REFERENCES genotype(genotype_id)
+);
+      ");
+
+      $curs_dbh->do("INSERT INTO metagenotype_temp(metagenotype_id, identifier, first_genotype_id, second_genotype_id, type)
+         SELECT metagenotype_id, identifier, pathogen_genotype_id, host_genotype_id, 'pathogen-host'
+         FROM metagenotype
+      ");
+
+      $curs_dbh->do("DROP TABLE metagenotype");
+
+      $curs_dbh->do("ALTER TABLE metagenotype_temp RENAME TO metagenotype");
+
+      my $annotation_rs = $curs_schema->resultset('Annotation');
+
+      $curs_dbh->do("PRAGMA foreign_keys = ON");
+
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  31 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    my $update_proc = sub {
+      my $curs = shift;
+      my $curs_schema = shift;
+      my $curs_key = $curs->curs_key();
+
+      my $curs_dbh = $curs_schema->storage()->dbh();
+
+      $curs_dbh->do("
+CREATE TABLE allele_note (
+       allele_note_id integer PRIMARY KEY,
+       allele integer REFERENCES allele(allele_id),
+       key text NOT NULL,
+       value text
+);
+");
+    };
+
+    Canto::Track::curs_map($config, $track_schema, $update_proc);
+  },
+
+  32 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+    my $load_util = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $load_util->get_cvterm(cv_name => 'Canto cursprop types',
+                           term_name => 'first_approved_timestamp',
+                           ontologyid => 'Canto:first_approved_timestamp');
+
+    Canto::Track::update_all_statuses($config);
+  },
+
+  33 => sub {
+    my $config = shift;
+    my $track_schema = shift;
+    my $load_util = shift;
+
+    my $dbh = $track_schema->storage()->dbh();
+
+    $dbh->do("
+CREATE TABLE strainsynonym (
+       strainsynonym_id integer NOT NULL PRIMARY KEY,
+       strain_id integer NOT NULL REFERENCES strain (strain_id),
+       synonym text NOT NULL
+);
+");
+
+    $dbh->do("ALTER TABLE strain ADD COLUMN strain_abbreviation text;");
+  },
 );
 
 sub upgrade_to

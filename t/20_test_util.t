@@ -44,7 +44,8 @@ use Canto::Track::LoadUtil;
   # test _process_data()
 
   my $config = Canto::Config::get_config();
-  $config->merge_config($config->{test_config_file});
+  $config->merge_config([$config->{test_config_file}]);
+  $config->setup();
 
   my $annotations_conf =
     $config->{test_config}->{test_cases}->
@@ -136,7 +137,7 @@ sub track_init
                                            });
   $track_schema->create_with_type('Person',
                                   {
-                                    email_address => 'kevin.hardwick@ed.ac.uk',
+                                    email_address => 'kevin.hardwick@0b7c25eb5467e87b3655607c1aaf61d1f4d491b6.ac.uk',
                                     name => 'Kevin Hardwick',
                                     role => $role,
                                   });
@@ -182,7 +183,7 @@ sub track_init
                                                    }
                                                  },
                                   });
-  my $organism = $load_util->get_organism('Schizosaccharomyces', 'pombe', 4896);
+  my $organism = $load_util->get_organism('Schizosaccharomyces pombe', 4896);
 
   $track_schema->create_with_type('Gene',
                                   {
@@ -221,7 +222,8 @@ sub track_init
   # test make_curs_db
 
   my $config = Canto::Config::get_config();
-  $config->merge_config($config->{test_config_file});
+  $config->merge_config([$config->{test_config_file}]);
+  $config->setup();
 
   my $curs_config =
     $config->{test_config}->{test_cases}->{curs_annotations_1}->[0];

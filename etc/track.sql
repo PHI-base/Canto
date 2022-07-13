@@ -132,13 +132,23 @@ CREATE INDEX cvterm_dbxref_idx2 ON cvterm_dbxref (dbxref_id);
 CREATE TABLE organism (
        organism_id integer NOT NULL PRIMARY KEY,
        abbreviation varchar(255) null,
-       genus varchar(255) NOT NULL,
-       species varchar(255) NOT NULL,
+       scientific_name varchar(255) NOT NULL,
        common_name varchar(255) null,
        comment text null
 );
 
 CREATE INDEX organism_idx1 ON organism (organism_id);
+
+CREATE TABLE strain (
+       strain_id integer NOT NULL PRIMARY KEY,
+       organism_id integer NOT NULL REFERENCES organism (organism_id),
+       strain_name text NOT NULL);
+
+CREATE TABLE strainsynonym (
+       strainsynonym_id integer NOT NULL PRIMARY KEY,
+       strain_id integer NOT NULL REFERENCES strain (strain_id),
+       synonym text NOT NULL
+);
 
 CREATE TABLE organismprop (
        organismprop_id integer NOT NULL PRIMARY KEY,
@@ -178,6 +188,8 @@ CREATE TABLE curs (
        curs_key text NOT NULL,
        creation_date timestamp
 );
+
+CREATE INDEX curs_curs_key_idx ON curs(curs_key);
 
 CREATE TABLE curs_curator (
        curs_curator_id integer NOT NULL PRIMARY KEY,

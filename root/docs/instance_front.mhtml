@@ -1,5 +1,5 @@
 <!-- PAGE_TITLE: @@long_name@@ -->
-<!-- PAGE_SUBTITLE: Curate genetic and molecular data from your publications -->
+<!-- PAGE_SUBTITLE: @@instance_front_subtitle@@ -->
 <!-- FLAGS: use_bootstrap -->
 
 <div class="row" style="padding-top: 20px">

@@ -5,28 +5,36 @@
 If you have physical interactions to curate, please read the
 Directionality section carefully.
 </p>
+
 <p>
-When you choose 'Physical interaction', you go to a page that lists
-all of the genes you have entered for the paper. Select one or more
-genes, then click 'Proceed' to go to the evidence selection page.
-</p>
-<p>
-Note that only pairwise physical interactions can be annotated in
-Canto. Thus, if you choose more than one interacting gene, you will
-create two or more separate interaction annotations, with the same
-evidence.
-</p>
-<p>
-On the evidence selection page, choose from the pulldown menu. Some
-evidence types have a brief description that indicates the
-directionality. Further information on evidence supporting physical
-interactions is available an the <a
-href="http://wiki.thebiogrid.org/doku.php/experimental_systems#physical_interactions">BioGRID
-help wiki</a> and in the Directionality section below. Click 'Proceed'
-to finish the annotation and return to the paper summary page.
+We recommend that you only annotate interactions that you think are
+biologically meaningful. For example, don't include known or suspected
+contaminants from mass spectrometry results (e.g. ribosomal proteins,
+translation factors, 'sticky' proteins).
 </p>
 
-<h2>Directionality</h2>
+<p>
+When you choose 'Physical interaction', a popup appears with two
+pulldown menus and a text field for optional comments.
+</p>
+<p>
+Choose an evidence type from the first pulldown menu. Some
+evidence types have a brief description that indicates the
+directionality. Further information on evidence supporting physical
+interactions, including examples of experiment types in each category, is available an the <a
+href="http://wiki.thebiogrid.org/doku.php/experimental_systems#genetic_interactions">BioGRID
+help wiki</a> and in the Directionality section below.
+</p>
+<p>
+Choose the interacting gene from the second pulldown menu. Click 'OK'
+to finish the annotation and close the popup.
+</p>
+<p>
+Note that only pairwise genetic interactions can be annotated in
+Canto. 
+</p>
+
+<h3>Directionality</h3>
 <p>
 Some experiments that detect physical interactions
 have an inherent directionality. For example, in a typical two-hybrid
@@ -37,8 +45,8 @@ fused to the DNA binding domain, may or may not have been done.
 </p>
 <p>
 For such "asymmetric" interactions, Canto allows you to curate in only
-one direction starting from the gene you have selected, as indicated
-in the evidence selector.
+one direction starting from the gene you select first, as indicated
+in the interaction type selector.
 </p>
 <p>
 If the evidence description looks the wrong way around, you will have
@@ -74,7 +82,7 @@ wrong gene.)
     <td>captures</td>
   </tr>
   <tr>
-    <td>FRET</td>
+    <td>FRET (fluorescence resonance energy transfer)</td>
     <td>fluorescence resonance energy donor to</td>
   </tr>
   <tr>
@@ -126,7 +134,7 @@ entered once, and you can start from either of the interacting genes.
     <td>forms complex with</td>
   </tr>
   <tr>
-    <td>PCA*</td>
+    <td>PCA* (protein-fragment complementation assay)</td>
     <td>interacts with</td>
   </tr>
 </table>

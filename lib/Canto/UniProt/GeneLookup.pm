@@ -41,11 +41,63 @@ the Free Software Foundation, either version 3 of the License, or
 use Carp;
 use Moose;
 
+use Canto::Track::GeneLookup;
+
+has schema => (is => 'rw', init_arg => undef, lazy_build => 1);
+
 with 'Canto::Role::Configurable';
+with 'Canto::Role::TrackGeneLookupCache';
 with 'Canto::Role::GeneLookupCache';
+
+has organism_lookup => (is => 'rw', isa => 'Canto::Track::OrganismLookup',
+                        lazy_build => 1);
+
+sub _build_organism_lookup
+{
+  my $self = shift;
+
+  return Canto::Track::get_adaptor($self->config(), 'organism');
+}
 
 use Package::Alias UniProtUtil => 'Canto::UniProt::UniProtUtil';
 use Clone qw(clone);
+
+sub _get_results
+{
+  my $self = shift;
+  my $search_terms_ref = shift;
+
+  my @results = UniProtUtil::retrieve_entries($self->config(), $search_terms_ref);
+
+  map {
+    my $result = $_;
+
+    my $species_taxon_id =
+      $self->config()->get_species_taxon_of_strain_taxon($result->{organism_taxonid});
+    if ($species_taxon_id) {
+      # this gene is from a strain, swap in the species details
+      # See: https://github.com/pombase/canto/issues/1611
+      my $organism_lookup = $self->organism_lookup();
+
+      my $organism_details = $organism_lookup->lookup_by_taxonid($species_taxon_id);
+
+      $result->{organism_taxonid} = $species_taxon_id;
+      $result->{organism_full_name} = $organism_details->{scientific_name};
+      $result->{organism_common_name} = $organism_details->{common_name};
+    }
+  } @results;
+
+  return @results;
+}
+
+sub _build_schema
+{
+  my $self = shift;
+
+  my $config = $self->config();
+
+  return Canto::TrackDB->new(config => $config);
+}
 
 =head2 lookup
 
@@ -73,20 +125,21 @@ use Clone qw(clone);
 sub lookup
 {
   my $self = shift;
+
   my $options = {};
   if (@_ == 2) {
     $options = shift;
   }
   if (exists $options->{search_organism}) {
     croak qq(can't handle search_organism option "),
-      $options->{search_organism}->{genus}, " ",
-      $options->{search_organism}->{species}, qq(" for UniProt gene lookups);
+      $options->{search_organism}->{scientific_name}, qq(" for UniProt gene lookups);
   }
 
   my $search_terms_ref = shift;
 
-  my @results = UniProtUtil::retrieve_entries($self->config(),
-                                              $search_terms_ref);
+  @$search_terms_ref = map { uc } @$search_terms_ref;
+
+  my @results = $self->_get_results($search_terms_ref);
 
   my %missing_search_terms = ();
   @missing_search_terms{@$search_terms_ref} = @$search_terms_ref;

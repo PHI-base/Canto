@@ -29,6 +29,7 @@ my $add_person = 0;
 my $add_by_pubmed_id = 0;
 my $add_by_pubmed_query = 0;
 my $add_session = 0;
+my $add_sessions_from_json = 0;
 my $add_organism = 0;
 my $dry_run = 0;
 my $do_help = 0;
@@ -59,6 +60,9 @@ my %dispatch = (
   '--session' => sub {
     $add_session = 1;
   },
+  '--sessions-from-json' => sub {
+    $add_sessions_from_json = 1;
+  },
   '--help' => sub {
     $do_help = 1;
   },
@@ -83,7 +87,7 @@ sub usage
   my $message= shift;
 
   if (defined $message) {
-    $message .= "\n";
+    $message = "Error: $message\n\n";
   } else {
     $message = '';
   }
@@ -97,9 +101,11 @@ or:
 or:
   $0 --pubmed-by-query <query>
 or:
-  $0 --session <pubmed_id> <user_email_address>
+  $0 --session <pubmed_id> <curator_email_address>
 or:
-  $0 --organism <genus> <species> <taxon_id>
+  $0 --sessions-from-json <json_file_name> <curator_email_address> <default_organism_taxonid>
+or:
+  $0 --organism "<genus> <species>" <taxon_id> [<common_name>]
 
 Options:
   --cvterm  - add a cvterm to the database
@@ -120,7 +126,27 @@ Options:
   --pubmed-by-query  - add publications by querying PubMed
       eg. 'pombe OR "fission yeast"'
   --session - create a session for a publication
+  --sessions-from-json - create a session from a JSON file
+
+File formats
+~~~~~~~~~~~~
+
+--sessions-from-json:
+
+  For a description of the <json_file_name> argument, see:
+    https://github.com/pombase/canto/wiki/JSON-Import-Format
+
+  <curator_email_address> - each new session will have this user as its curator
+
+  <default_organism_taxonid> - this is the organism to use for each genotype will
+                               created for alleles in the JSON file
+
+  If $0 is called using "canto_docker" the JSON file can be read from the
+  "import_export" directory.  eg.
+     ./canto/script/canto_docker /import_export/session_data.json curator\@pombase.org 4896
+
 |;
+
 }
 
 if ($do_help) {
@@ -139,8 +165,12 @@ if ($add_session && @ARGV != 2) {
   usage("--session needs 2 or 3 arguments");
 }
 
-if ($add_organism && @ARGV != 3) {
-  usage("--organism needs 3 arguments");
+if ($add_sessions_from_json && @ARGV != 3) {
+  usage("--sessions-from-json needs 3 arguments");
+}
+
+if ($add_organism && (@ARGV < 2 || @ARGV > 4)) {
+  usage("--organism needs 2 or 3 arguments");
 }
 
 if (@ARGV == 0) {
@@ -225,13 +255,13 @@ my $proc = sub {
   }
 
   if ($add_organism) {
-    my $genus = shift @ARGV;
-    my $species = shift @ARGV;
+    my $scientific_name = shift @ARGV;
     my $taxon_id = shift @ARGV;
+    my $common_name = shift @ARGV;
 
     my $load_util = Canto::Track::LoadUtil->new(schema => $schema);
     my $guard = $schema->txn_scope_guard;
-    $load_util->get_organism($genus, $species, $taxon_id);
+    $load_util->get_organism($scientific_name, $taxon_id, $common_name);
     $guard->commit unless $dry_run;
   }
 };
@@ -258,4 +288,22 @@ if ($add_by_pubmed_query) {
       die "loading failed: $@\n";
     }
   }
+}
+
+if ($add_sessions_from_json) {
+  my $file_name = shift @ARGV;
+  # use the Person added by the add_person code
+
+  if (!-f $file_name) {
+    die "file not found ($file_name) - exiting\n";
+  }
+
+  my $email_address = shift @ARGV;
+  my $taxonid = shift @ARGV;
+
+  my ($new_sessions, $updated_sessions) =
+    $load_util->create_sessions_from_json($config, $file_name, $email_address, $taxonid);
+
+  print "created ", scalar(@$new_sessions), " sessions\n";
+  print "updated ", scalar(@$updated_sessions), " sessions\n";
 }

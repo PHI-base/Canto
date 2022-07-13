@@ -128,8 +128,8 @@ __PACKAGE__->belongs_to(
 );
 
 
-# Created by DBIx::Class::Schema::Loader v0.07045 @ 2016-08-21 19:35:12
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:mSb5pklq73hNN6yuNUz9kg
+# Created by DBIx::Class::Schema::Loader v0.07046 @ 2018-05-02 10:30:38
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:O2vcN5tZ2U8LP7XhLqb/lA
 
 =head2 feature_id
 
@@ -198,24 +198,24 @@ sub _get_indirect_annotations
       if ($include_with_annotations &&
           defined $with_gene && $with_gene eq $self->primary_identifier()) {
         $ids{$annotation->annotation_id()} = 1;
-      } else {
-        my $interacting_genes = $annotation->data()->{interacting_genes};
+      }
 
-        if (defined $interacting_genes) {
-          if ($remove_annotations) {
-            # special case - only delete the whole Annotation if we
-            # are deleting the last interactor
-            Canto::Curs::Utils::delete_interactor($annotation, $self->primary_identifier());
-          } else {
-            my @interacting_genes = @$interacting_genes;
+      my $interacting_genes = $annotation->data()->{interacting_genes};
 
-            for my $interacting_gene (@interacting_genes) {
-              my $interacting_gene_identifier =
-                $interacting_gene->{primary_identifier};
-              if ($interacting_gene_identifier eq $self->primary_identifier()) {
-                $ids{$annotation->annotation_id()} = 1;
-                last;
-              }
+      if (defined $interacting_genes) {
+        if ($remove_annotations) {
+          # special case - only delete the whole Annotation if we
+          # are deleting the last interactor
+          Canto::Curs::Utils::delete_interactor($annotation, $self->primary_identifier());
+        } else {
+          my @interacting_genes = @$interacting_genes;
+
+          for my $interacting_gene (@interacting_genes) {
+            my $interacting_gene_identifier =
+              $interacting_gene->{primary_identifier};
+            if ($interacting_gene_identifier eq $self->primary_identifier()) {
+              $ids{$annotation->annotation_id()} = 1;
+              last;
             }
           }
         }
@@ -274,6 +274,22 @@ sub all_annotations
   return $self->_get_indirect_annotations(1, 0, $include_with);
 }
 
+=head2 genotypes
+
+ Usage   : my $genotypes_rs = $self->genotypes();
+ Function: Return a ResultSet of the genotypes that contain alleles of
+           this gene
+
+=cut
+
+sub genotypes
+{
+  my $self = shift;
+
+  return $self->search_related_rs('alleles')->search_related_rs('allele_genotypes')
+    ->search_related_rs('genotype');
+}
+
 sub delete
 {
   my $self = shift;
@@ -298,6 +314,8 @@ sub delete
       $allele_genotype->delete();
       $genotype->delete();
     };
+    $allele->search_related('allelesynonyms')->delete();
+    $allele->search_related('allele_notes')->delete();
     $allele->delete();
   } $self->alleles();
 

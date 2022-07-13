@@ -16,7 +16,8 @@ my $lc_app_name = lc Canto::Config::get_application_name();
 my $uc_app_name = uc $lc_app_name;
 
 my $config = $test_util->config();
-$config->merge_config($test_util->root_dir() . '/t/data/50_config_1.yaml');
+$config->merge_config([$test_util->root_dir() . '/t/data/50_config_1.yaml']);
+$config->setup();
 
 my $schema = Canto::TrackDB->new(config => $config);
 
@@ -32,7 +33,7 @@ $mock_c->mock('request', sub { return $mock_request; });
 
 package main;
 
-my $person_email = 'Nicholas.Willis@umassmed.edu';
+my $person_email = 'Nicholas.Willis@2c0e6282230890808f2298475c741b2d2f44de03.edu';
 
 my $person = $schema->find_with_type('Person',
                                      {

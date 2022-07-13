@@ -54,24 +54,6 @@ WHERE pp.type_id IN
      FROM cvterm
      WHERE name = 'pubmed_publication_date')
 EOF
-
-  $chado_dbh->prepare(<<'EOF')->execute();
-CREATE TEMP TABLE pub_canto_curator_roles AS
-  SELECT pub.uniquename, pp.value AS status
-    FROM pub
-    LEFT OUTER JOIN pubprop pp
-                 ON pp.pub_id = pub.pub_id AND pp.type_id IN
-                   (SELECT cvterm_id FROM cvterm WHERE name = 'canto_curator_role')
-WHERE pub.pub_id IN
-    (SELECT pub_id FROM pubprop pp
-       JOIN cvterm pt ON pt.cvterm_id = pp.type_id
-        AND pt.name = 'canto_triage_status'
-        AND (pp.value LIKE 'Curatable%' OR pp.value LIKE 'curatable%'));
-EOF
-
-  $chado_dbh->prepare(<<'EOF')->execute();
-CREATE INDEX pub_dates_uniquename_index ON pub_dates(uniquename);
-EOF
 }
 
 # returns the number of completed (but not necessarily approved) sessions and the number of
@@ -83,12 +65,17 @@ sub curation_response_rate
   my $dbh = $track_schema->storage()->dbh();
   my $query = <<"EOF";
 
-  SELECT count(distinct(curs_id))
-FROM curs
+  SELECT count(distinct(outer_curs.curs_id))
+FROM curs outer_curs
 JOIN curs_curator cc ON cc.curs = curs_id
 JOIN person p ON p.person_id = cc.curator
 JOIN cvterm ROLE ON p.ROLE = ROLE.cvterm_id
-WHERE ROLE.name = 'user' AND curs_id IN
+WHERE ROLE.name = 'user'
+  AND (curs_curator_id =
+         (SELECT max(curs_curator_id)
+          FROM curs_curator
+          WHERE curs = outer_curs.curs_id))
+  AND curs_id IN
     (SELECT curs
      FROM cursprop p, cvterm t
      WHERE t.cvterm_id = p.type
@@ -102,13 +89,17 @@ EOF
   my ($completed_community_session_count) = $sth->fetchrow_array();
 
   $query = <<"EOF";
-SELECT count(distinct(curs_id))
+SELECT count(distinct(outer_curs.curs_id))
 FROM cursprop cp
-JOIN curs ON curs.curs_id = cp.curs
+JOIN curs outer_curs ON outer_curs.curs_id = cp.curs
 JOIN curs_curator cc ON cc.curs = cp.curs
 JOIN person p ON p.person_id = cc.curator
 JOIN cvterm ROLE ON p.ROLE = ROLE.cvterm_id
-WHERE ROLE.name = 'user';
+WHERE ROLE.name = 'user'
+  AND (curs_curator_id =
+         (SELECT max(curs_curator_id)
+          FROM curs_curator
+          WHERE curs = outer_curs.curs_id));
 EOF
 
   $sth = $dbh->prepare($query);
@@ -134,20 +125,21 @@ WITH pub_curator_roles AS
       FROM pubprop
       JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
       WHERE pubprop.pub_id = pub.pub_id
-        AND ppt.name = 'canto_curator_role') AS ROLE,
+        AND ppt.name = 'canto_curator_role' LIMIT 1) AS ROLE,
 
      (SELECT value
       FROM pubprop
       JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
       WHERE pubprop.pub_id = pub.pub_id
-        AND ppt.name = 'canto_curator_email') AS curator,
-          extract(YEAR
-                  FROM
-                    (SELECT value
-                     FROM pubprop
-                     JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
-                     WHERE pubprop.pub_id = pub.pub_id
-                       AND ppt.name = 'canto_session_submitted_date')::TIMESTAMP) AS approved_year
+        AND ppt.name = 'canto_curator_name' LIMIT 1) AS curator,
+     extract(YEAR
+             FROM
+               (SELECT value
+                  FROM pubprop
+                  JOIN cvterm ppt ON ppt.cvterm_id = pubprop.type_id
+                 WHERE pubprop.pub_id = pub.pub_id
+                       AND ppt.name = 'canto_session_submitted_date' LIMIT 1)::TIMESTAMP)
+     AS approved_year
    FROM pub),
    curator_first_year AS
   (SELECT DISTINCT curator, min(approved_year) AS first_year
@@ -180,31 +172,41 @@ sub annotation_types_by_year
   my %stats = ();
 
   my $query = <<"EOF";
-SELECT annotation_year, annotation_type, count(id)
+SELECT annotation_year, annotation_type, count(distinct id)
 FROM pombase_genes_annotations_dates
 WHERE (evidence_code IS NULL OR evidence_code <> 'Inferred from Electronic Annotation')
+  AND (annotation_type NOT IN ('PomBase gene products', 'cat_act', 'subunit_composition', 'external_link', 'pathway'))
   AND (annotation_source IS NULL OR annotation_source <> 'BIOGRID')
-  AND annotation_year::integer >= 0
 GROUP BY annotation_type, annotation_year;
 EOF
 
   my $sth = $chado_dbh->prepare($query);
   $sth->execute() or die "Couldn't execute: " . $sth->errstr;
 
+  my $first_year = 2004;
+
   while (my ($year, $type, $count) = $sth->fetchrow_array()) {
-    $stats{$year}->{$type} = $count;
+    if (!$year || $year < $first_year) {
+      $year = "<$first_year";
+    }
+
+    if (!$stats{$year}) {
+      $stats{$year} = {};
+    }
+
+    if (defined $stats{$year}->{$type} && $year eq "<$first_year") {
+      $stats{$year}->{$type} += $count;
+    } else {
+      $stats{$year}->{$type} = $count;
+    }
   }
 
   my @rows = ();
 
-  my $first_year = 9999;
-
-  map {
-    $first_year = $_ if $_ < $first_year
-  } keys %stats;
-
   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime();
   my $current_year = $year + 1900;
+
+  push @rows, ["<$first_year", $stats{"<$first_year"}];
 
   for (my $year = $first_year; $year <= $current_year; $year++) {
     my $year_stats = $stats{$year};
@@ -230,53 +232,69 @@ sub curated_stats
 
   my %stats = ();
 
-  for my $curation_status ('uncurated', 'community', 'admin') {
+  my $first_year = 1980;
+
+  for my $curation_status ('admin', 'community', 'uncurated-admin',
+                           'uncurated-community', 'uncurated-unassigned',) {
     my $where;
 
-    if ($curation_status eq 'uncurated') {
-      $where = 'status is null';
+    if ($curation_status =~ /^uncurated/) {
+      $where = q|canto_approved_year IS NULL AND canto_triage_status = 'Curatable' |;
+
+      if ($curation_status =~ /unassigned/) {
+        $where .= q|AND canto_curator_role IS NULL|;
+      } else {
+        if ($curation_status =~ /admin/) {
+          $where .= q|AND canto_curator_role IS NOT NULL AND canto_curator_role <> 'community'|;
+        } else {
+          $where .= q|AND canto_curator_role = 'community'|;
+        }
+      }
     } else {
       if ($curation_status eq 'community') {
-        $where = q|status = 'community'|;
+        $where = q|canto_curator_role = 'community' AND canto_approved_year IS NOT NULL|;
       } else {
-        $where = q|status IS NOT NULL and status <> 'community'|;
+        $where = q|canto_curator_role IS NOT NULL AND canto_curator_role <> 'community' AND canto_approved_year IS NOT NULL|;
       }
     }
 
     my $query = <<"EOF";
-SELECT substring(pub_date FROM '^(\\d\\d\\d\\d)') AS year, count(roles.uniquename)
-   FROM pub_canto_curator_roles roles
-   JOIN pub_dates ON pub_dates.uniquename = roles.uniquename
-  WHERE $where
-   GROUP BY year
+SELECT pubmed_publication_year AS year, count(pmid)
+  FROM pombase_publication_curation_summary
+ WHERE ($where) AND pubmed_publication_year IS NOT NULL
+ GROUP BY pubmed_publication_year;
 EOF
 
     my $sth = $chado_dbh->prepare($query);
     $sth->execute() or die "Couldn't execute: " . $sth->errstr;
 
     while (my ($year, $count) = $sth->fetchrow_array()) {
-      $stats{$year}->{$curation_status} = $count;
+      $year = $first_year - 1 unless $year >= $first_year;
+      $stats{$year}->{$curation_status} //= 0;
+      $stats{$year}->{$curation_status} += $count;
     }
   }
 
   my @rows = ();
 
-  my $first_year = 9999;
-
-  map {
-    $first_year = $_ if $_ < $first_year
-  } keys %stats;
-
   my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime();
   my $current_year = $year + 1900;
 
-  for (my $year = $first_year; $year <= $current_year; $year++) {
+  for (my $year = $first_year - 1; $year <= $current_year; $year++) {
     my $year_stats = $stats{$year};
-    if (defined $year_stats) {
-      push @rows, [$year, $year_stats->{uncurated} // 0,
-                   $year_stats->{admin} // 0, $year_stats->{community} //0];
+    my $fixed_year;
+    if ($year >= $first_year) {
+      $fixed_year = $year;
     } else {
-      push @rows, [$year, 0, 0, 0];
+      $fixed_year = "<$first_year";
+    }
+    if (defined $year_stats) {
+      push @rows, [$fixed_year, $year_stats->{admin} // 0, $year_stats->{community} //0,
+                   $year_stats->{'uncurated-admin'} // 0,
+                   $year_stats->{'uncurated-community'} // 0,
+                   $year_stats->{'uncurated-unassigned'} // 0];
+    } else {
+      push @rows, [$fixed_year, 0, 0, 0, 0, 0];
     }
   }
 
@@ -287,6 +305,7 @@ sub per_publication_stats
 {
   my $chado_schema = shift;
   my $use_5_year_bins = shift // 0;
+  my $throughput = shift;
 
   my $chado_dbh = $chado_schema->storage()->dbh();
 
@@ -308,14 +327,16 @@ EOF
 EOF
   }
 
+  my $throughput_constraint = "annotation_throughput_type = '$throughput throughput'";
+
   my $annotation_query = <<"EOF";
  WITH counts AS
-  (SELECT substring(pub_date FROM '^(\\d\\d\\d\\d)') AS year, pmid, count(id)
-   FROM pombase_genes_annotations_dates
-   JOIN pub_dates ON uniquename = pmid
-  WHERE session IS NOT NULL
-   GROUP BY year, pmid
-   ORDER BY year)
+  (SELECT pubmed_publication_year AS year, pub_summ.pmid, count(distinct id)
+    FROM pombase_annotation_summary ann_summ
+    JOIN pombase_publication_curation_summary pub_summ on ann_summ.pmid = pub_summ.pmid
+   WHERE pubmed_publication_year IS NOT NULL
+     AND $throughput_constraint
+   GROUP BY year, pub_summ.pmid ORDER BY year)
 $select_sql;
 EOF
 
@@ -384,14 +405,14 @@ EOF
 sub _annotator_pub_counts
 {
   my $track_schema = shift;
-  my $curator_emails = shift;
+  my $curator_names = shift;
 
   my %annual_community_pub_counts = ();
   my %annual_curator_pub_counts = ();
 
   my $dbh = $track_schema->storage()->dbh();
   my $query = <<"EOF";
-SELECT curator.email_address, p.value
+SELECT curator.name, p.value
 FROM curs_curator me
 JOIN curs curs ON curs.curs_id = me.curs
 JOIN pub pub ON pub.pub_id = curs.pub
@@ -414,10 +435,10 @@ EOF
   my $sth = $dbh->prepare($query);
   $sth->execute() or die "Couldn't execute: " . $sth->errstr;
 
-  while (my ($email_address, $approval_date) = $sth->fetchrow_array()) {
+  while (my ($curator_name, $approval_date) = $sth->fetchrow_array()) {
     if ($approval_date =~ /^(\d\d\d\d)-\d\d-\d\d/) {
       my $year = $1;
-      if ($curator_emails->{$email_address}) {
+      if ($curator_names->{$curator_name}) {
         $annual_curator_pub_counts{$year}++;
       } else {
         $annual_community_pub_counts{$year}++;
@@ -431,7 +452,7 @@ EOF
 sub _annotator_annotation_counts
 {
   my $chado_schema = shift;
-  my $curator_emails = shift;
+  my $curator_names = shift;
 
   my %annual_community_annotation_counts = ();
   my %annual_curator_annotation_counts = ();
@@ -457,31 +478,31 @@ EOF
   $sth->execute() or die "Couldn't execute: " . $sth->errstr;
 
   $query = <<"EOF";
-SELECT emailprop.value,
+SELECT nameprop.value,
        ssd.submitted_date
 FROM feature_cvterm fc
-JOIN feature_cvtermprop emailprop ON fc.feature_cvterm_id = emailprop.feature_cvterm_id
+JOIN feature_cvtermprop nameprop ON fc.feature_cvterm_id = nameprop.feature_cvterm_id
 JOIN session_submitted_dates ssd ON ssd.pub_id = fc.pub_id
-WHERE emailprop.type_id IN
+WHERE nameprop.type_id IN
     (SELECT cvterm_id
      FROM cvterm
-     WHERE name = 'curator_email')
+     WHERE name = 'curator_name')
 UNION ALL
-SELECT emailprop.value,
+SELECT nameprop.value,
        ssd.submitted_date
 FROM feature_relationship fr
 JOIN feature_relationship_pub frpub ON frpub.feature_relationship_id = fr.feature_relationship_id
-JOIN feature_relationshipprop emailprop ON emailprop.feature_relationship_id = fr.feature_relationship_id
+JOIN feature_relationshipprop nameprop ON nameprop.feature_relationship_id = fr.feature_relationship_id
 JOIN session_submitted_dates ssd ON ssd.pub_id = frpub.pub_id
 WHERE fr.type_id IN
     (SELECT cvterm_id
      FROM cvterm
      WHERE name = 'interacts_genetically'
        OR name = 'interacts_physically')
-  AND emailprop.type_id IN
+  AND nameprop.type_id IN
     (SELECT cvterm_id
      FROM cvterm
-     WHERE name = 'curator_email')
+     WHERE name = 'curator_name')
   AND fr.feature_relationship_id IN
     (SELECT inferredprop.feature_relationship_id
      FROM feature_relationshipprop inferredprop
@@ -495,10 +516,10 @@ EOF
   $sth = $dbh->prepare($query);
   $sth->execute() or die "Couldn't execute: " . $sth->errstr;
 
-  while (my ($email, $date) = $sth->fetchrow_array()) {
+  while (my ($name, $date) = $sth->fetchrow_array()) {
     if ($date =~ /(\d\d\d\d)-?(\d\d)-?(\d\d)/) {
       my $year = $1;
-      if ($curator_emails->{$email}) {
+      if ($curator_names->{$name}) {
         $annual_curator_annotation_counts{$year}++;
       } else {
         $annual_community_annotation_counts{$year}++;
@@ -515,22 +536,22 @@ sub annotation_stats_table
   my $chado_schema = shift;
   my $track_schema = shift;
 
-  my %curator_emails = ();
+  my %curator_names = ();
 
   my $curator_rs =
     $track_schema->resultset('Person')
       ->search({ 'role.name' => 'admin' }, { join => 'role' });
 
   while (defined (my $curator = $curator_rs->next())) {
-    $curator_emails{$curator->email_address()} = 1;
+    $curator_names{$curator->name()} = 1;
   }
 
   my ($annual_community_pub_counts, $annual_curator_pub_counts) =
-    _annotator_pub_counts($track_schema, \%curator_emails);
+    _annotator_pub_counts($track_schema, \%curator_names);
 
   my ($annual_community_annotation_counts,
       $annual_curator_annotation_counts) =
-    _annotator_annotation_counts($chado_schema, \%curator_emails);
+    _annotator_annotation_counts($chado_schema, \%curator_names);
 
   my $first_year = 9999;
 
@@ -563,7 +584,6 @@ sub stats_finish
   my $chado_dbh = $chado_schema->storage()->dbh();
 
   $chado_dbh->prepare('drop table pub_dates')->execute();
-  $chado_dbh->prepare('drop table pub_canto_curator_roles')->execute();
 }
 
 1;

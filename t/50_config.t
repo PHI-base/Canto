@@ -1,6 +1,6 @@
 use strict;
 use warnings;
-use Test::More tests => 26;
+use Test::More tests => 29;
 
 use Test::Deep;
 
@@ -12,11 +12,11 @@ my $test_util = Canto::TestUtil->new();
 my $config_yaml_1 = $test_util->root_dir() . '/t/data/50_config_1.yaml';
 my $config_yaml_2 = $test_util->root_dir() . '/t/data/50_config_2.yaml';
 
-my $config_single = Canto::Config->new($config_yaml_1);
+my $config_single = Canto::Config->new([$config_yaml_1]);
 
 is($config_single->{some_key}, 'some_value_1');
 
-is(keys %{$config_single}, 11);
+is(keys %{$config_single}, 18);
 
 ok(!$config_single->{annotation_types}->{phenotype}->{needs_with_or_from});
 ok($config_single->{annotation_types}->{cellular_component}->{needs_with_or_from});
@@ -32,20 +32,21 @@ ok($lab_classinfo->{field_infos}->{people}->{is_collection});
 
 
 # test loading two config files
-my $config_two = Canto::Config->new($config_yaml_1, $config_yaml_2);
+my $config_two = Canto::Config->new([$config_yaml_1, $config_yaml_2]);
 
 is($config_two->{some_key}, 'some_value_1');
 is($config_two->{some_key_for_overriding}, 'overidden_value');
-is(keys %{$config_two}, 11);
+is(keys %{$config_two}, 18);
 
 
 # test loading then merging
-my $config_merge = Canto::Config->new($config_yaml_1);
-$config_merge->merge_config($config_yaml_2);
+my $config_merge = Canto::Config->new([$config_yaml_1]);
+$config_merge->merge_config([$config_yaml_2]);
+$config_merge->setup();
 
 is($config_merge->{some_key}, 'some_value_1');
 is($config_merge->{some_key_for_overriding}, 'overidden_value');
-is(keys %{$config_merge}, 11);
+is(keys %{$config_merge}, 18);
 
 cmp_deeply($config_merge->{key_for_merging},
            {
@@ -86,206 +87,161 @@ is($config_with_suffix->{extra_css}, '/static/css/test_style.css');
 ok ($config_with_suffix->{extension_configuration});
 
 
-cmp_deeply($config_with_suffix->{extension_configuration},
-          [
-            {
-              'allowed_relation' => 'has_substrate',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'display_text' => 'kinase substrate',
-              'range' => [
-                           {
-                             'type' => 'Gene'
-                           }
-                         ],
-              'help_text' => '',
-              'domain' => 'GO:0016023',
-              'role' => 'user',
-              'subset_rel' => [
-                                'is_a'
-                              ]
-            },
-            {
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'role' => 'user',
-              'domain' => 'GO:0016023',
-              'range' => [
-                           {
-                             'type' => 'Ontology',
-                             'scope' => [
-                                          'GO:0005215'
-                                        ]
-                           }
-                         ],
-              'help_text' => '',
-              'allowed_relation' => 'happens_during',
-              'cardinality' => [
-                                 '*'
-                               ],
-              'display_text' => 'Something that happens during'
-            },
-            {
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'role' => 'user',
-              'domain' => 'GO:0022857',
-              'help_text' => '',
-              'range' => [
-                           {
-                             'type' => 'Gene'
-                           }
-                         ],
-              'display_text' => 'localizes',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'allowed_relation' => 'localizes'
-            },
-            {
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'allowed_relation' => 'occurs_at',
-              'display_text' => 'occurs at',
-              'help_text' => '',
-              'range' => [
-                           {
-                             'scope' => [
-                                          'SO:0001799'
-                                        ],
-                             'type' => 'Ontology'
-                           }
-                         ],
-              'domain' => 'GO:0022857',
-              'role' => 'user',
-              'subset_rel' => [
-                                'is_a'
-                              ]
-            },
-            {
-              'allowed_relation' => 'modifies_residue',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'display_text' => 'occurs at',
-              'range' => [
-                           {
-                             'type' => 'Text',
-                             'input_type' => 'text'
-                           }
-                         ],
-              'help_text' => '',
-              'domain' => 'GO:0022857',
-              'role' => 'user',
-              'subset_rel' => [
-                                'is_a'
-                              ]
-            },
-            {
-              'exclude_subset_ids' => ['GO:0055085'],
-              'domain' => 'GO:0006810',
-              'role' => 'user',
-              'allowed_relation' => 'localizes',
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'help_text' => '',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'range' => [
-                           {
-                             'type' => 'Gene'
-                           }
-                         ],
-              'display_text' => 'localizes'
-            },
-            {
-              'help_text' => '',
-              'range' => [
-                           {
-                             'type' => 'Gene'
-                           }
-                         ],
-              'domain' => 'GO:0034762',
-              'display_text' => 'occurs at',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'allowed_relation' => 'occurs_at',
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'role' => 'user'
-            },
-            {
-              'role' => 'user',
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'cardinality' => [
-                                 '0',
-                                 '2'
-                               ],
-              'allowed_relation' => 'assayed_using',
-              'display_text' => 'assayed using',
-              'domain' => 'FYPO:0000002',
-              'help_text' => '',
-              'range' => [
-                           {
-                             'type' => 'Gene'
-                           }
-                         ]
-            },
-            {
-              'subset_rel' => [
-                                'is_a'
-                              ],
-              'role' => 'user',
-              'range' => [
-                           {
-                             'scope' => [
-                                          'FYPO_EXT:1000000'
-                                        ],
-                             'type' => 'Ontology'
-                           },
-                           {
-                             'type' => '%'
-                           }
-                         ],
-              'help_text' => '',
-              'domain' => 'FYPO:0000002',
-              'allowed_relation' => 'has_penetrance',
-              'cardinality' => [
-                                 '0',
-                                 '1'
-                               ],
-              'display_text' => 'penetrance'
-            }
-          ]);
-
+cmp_deeply(
+  $config_with_suffix->{extension_configuration},
+  [
+    {
+      'domain' => 'GO:0016023',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'has_substrate',
+      'range' => [{ 'type' => 'Gene' }],
+      'display_text' => 'kinase substrate',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'cellular_component',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0016023',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'happens_during',
+      'range' => [
+        {
+          'type' => 'Ontology',
+          'scope' => ['GO:0005215']
+        }
+      ],
+      'display_text' => 'Something that happens during',
+      'help_text' => '',
+      'cardinality' => ['*'],
+      'role' => 'user',
+      'annotation_type_name' => 'cellular_component',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0022857',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'localizes',
+      'range' => [{'type' => 'Gene'}],
+      'display_text' => 'localizes',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'biological_process',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0022857',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'occurs_at',
+      'range' => [
+        {
+          'scope' => ['SO:0001799'],
+          'type' => 'Ontology'
+        }
+      ],
+      'display_text' => 'occurs at',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'biological_process',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0022857',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'modifies_residue',
+      'range' => [
+        {
+          'type' => 'Text',
+          'input_type' => 'text'
+        }
+      ],
+      'display_text' => 'occurs at',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'biological_process',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0006810',
+      'exclude_subset_ids' => ['is_a(GO:0055085)'],
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'localizes',
+      'range' => [{'type' => 'Gene'}],
+      'display_text' => 'localizes',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'biological_process',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'GO:0034762',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'occurs_at',
+      'range' => [{'type' => 'Gene'}],
+      'display_text' => 'occurs at',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'biological_process',
+      'feature_type' => 'gene',
+    },
+    {
+      'domain' => 'FYPO:0000002',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'assayed_using',
+      'range' => [{'type' => 'Gene'}],
+      'display_text' => 'assayed using',
+      'help_text' => '',
+      'cardinality' => ['0', '2'],
+      'role' => 'user',
+      'annotation_type_name' => 'phenotype',
+      'feature_type' => 'genotype',
+    },
+    {
+      'domain' => 'FYPO:0000002',
+      'subset_rel' => ['is_a'],
+      'allowed_relation' => 'has_penetrance',
+      'range' => [
+        {
+          'type' => '%'
+        },
+        {
+          'scope' => ['FYPO_EXT:1000000'],
+          'type' => 'Ontology'
+        },
+      ],
+      'display_text' => 'penetrance',
+      'help_text' => '',
+      'cardinality' => ['0', '1'],
+      'role' => 'user',
+      'annotation_type_name' => 'phenotype',
+      'feature_type' => 'genotype',
+    }
+  ]
+);
 
 use JSON;
 
 my $config_for_json = $config_with_suffix->for_json('allele_types');
 
 my $description_required =
-  $config_for_json->{'mutation of a single nucleotide'}->{description_required};
+  $config_for_json->{'nucleotide substitution(s)'}->{description_required};
 my $allele_name_required =
-  $config_for_json->{'mutation of a single nucleotide'}->{allele_name_required};
+  $config_for_json->{'nucleotide substitution(s)'}->{allele_name_required};
 
 ok ($description_required);
 ok (!$allele_name_required);
 
 ok ($description_required == JSON::true);
 ok ($allele_name_required == JSON::false);
+
+# species taxon ID lookup
+is ($config_single->get_species_taxon_of_strain_taxon(1238467), 168172);
+is ($config_single->get_species_taxon_of_strain_taxon(231718), 4565);
+ok (!defined $config_single->get_species_taxon_of_strain_taxon(8765431));
+

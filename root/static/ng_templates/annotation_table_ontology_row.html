@@ -1,16 +1,51 @@
-<tr ng-class="{ 'curs-row-checked' : sessionState == 'APPROVAL_IN_PROGRESS' && checked == 'yes' }">
-  <td ng-if="annotationType.feature_type == 'genotype'">
-    <div style="white-space: nowrap" ng-repeat="allele in annotation.alleles">
-      {{allele.gene_display_name}}
+<tr ng-class="{ 'curs-row-checked' : sessionState == 'APPROVAL_IN_PROGRESS' && checked == 'yes' || showCheckboxes && checkboxChecked }"
+    ng-click="showCheckboxes && checkboxClick()">
+  <td class="curs-annotation-table-checkbox" ng-if="showCheckboxes">
+    <input type="checkbox" name="selectAnnotation"
+           ng-checked="checkboxChecked"/>
+  </td>
+  <td ng-if="showFeatures && multiOrganismMode && annotationType.feature_type !== 'metagenotype'">
+    <span class="organism-name" ng-if="annotation.organism">{{annotation.organism.scientific_name | abbreviateGenus}}</span>
+    <span class="organism-name" ng-if="!annotation.organism">{{annotation.taxonid | abbreviateGenus}}</span>
+    <span class="curs-strain-name-inline" ng-if="showStrain"> ({{annotation.strain_name}})</span>
+  </td>
+  <td ng-if="showFeatures && annotationType.feature_type == 'genotype'">
+    <div style="white-space: nowrap" ng-repeat="locus in displayLoci">
+      {{locus.gene_display_name}}
     </div>
   </td>
-  <td ng-if="annotationType.feature_type == 'genotype' && !data.hideColumns.genotype_background">
+  <td ng-if="showFeatures && annotationType.feature_type == 'metagenotype'">
+    <a ng-href="{{featureLink('genotype', annotation.pathogen_genotype.genotype_id)}}"><span ng-bind-html="annotation.pathogen_genotype.genotype_display_name | encodeAlleleSymbols | toTrusted"></span></a>
+    <div>
+      <span class="organism-name">{{annotation.pathogen_genotype.organism.scientific_name | abbreviateGenus}}</span>
+      <span ng-if="annotation.pathogen_genotype.strain_name" class="curs-strain-name-inline">({{annotation.pathogen_genotype.strain_name}})</span>
+    </div>
+    <div ng-if="annotation.pathogen_genotype.genotype_background">
+      <b>bkg:</b> <span ng-bind-html="annotation.pathogen_genotype.genotype_background | encodeAlleleSymbols | toTrusted"></span>
+    </div>
+  </td>
+  <td ng-if="showFeatures && annotationType.feature_type == 'metagenotype'">
+    <div ng-switch="hasWildTypeHost">
+      <a ng-switch-when="false" ng-href="{{featureLink('genotype', annotation.host_genotype.genotype_id)}}">
+        <span ng-bind-html="annotation.host_genotype.genotype_display_name | encodeAlleleSymbols | toTrusted"></span>
+      </a>
+      <span ng-switch-when="true" ng-bind-html="annotation.host_genotype.genotype_display_name | encodeAlleleSymbols | toTrusted"></span>
+    </div>
+    <div>
+      <span class="organism-name">{{annotation.host_genotype.organism.scientific_name | abbreviateGenus}}</span>
+      <span ng-if="annotation.host_genotype.strain_name" class="curs-strain-name-inline">({{annotation.host_genotype.strain_name}})</span>
+    </div>
+    <div ng-if="annotation.host_genotype.genotype_background">
+      <b>bkg:</b> <span ng-bind-html="annotation.host_genotype.genotype_background | encodeAlleleSymbols | toTrusted"></span>
+    </div>
+  </td>
+  <td ng-if="showFeatures && annotationType.feature_type == 'genotype' && !data.hideColumns.genotype_background">
     <span ng-bind-html="annotation.genotype_background | encodeAlleleSymbols | toTrusted"></span>
   </td>
-  <td ng-if="annotationType.feature_type == 'genotype' && !data.hideColumns.genotype_name">
+  <td ng-if="showFeatures && annotationType.feature_type == 'genotype' && !data.hideColumns.genotype_name">
     <span ng-bind-html="annotation.genotype_name | encodeAlleleSymbols | toTrusted"></span>
   </td>
-  <td ng-if="annotationType.feature_type === 'gene' && !featureIdFilter">
+  <td ng-if="showFeatures && annotationType.feature_type === 'gene' && !featureIdFilter">
     <a ng-if="annotation.status === 'new' && addLinks()"
        href="{{featureLink(annotationType.feature_type, annotation.feature_id)}}">
       {{annotation.gene_name_or_identifier}}
@@ -19,33 +54,43 @@
       {{annotation.gene_name_or_identifier}}
     </span>
   </td>
-  <td ng-if="annotationType.feature_type != 'gene'">
+  <td ng-if="showFeatures && annotationType.feature_type == 'genotype'">
     <span ng-if="annotation.status === 'new'">
       <a ng-if="addLinks()"
          href="{{featureLink(annotationType.feature_type, annotation.feature_id)}}">
-        <div style="white-space: nowrap" ng-repeat="allele in annotation.alleles">
-          <span ng-bind-html="allele.long_display_name | encodeAlleleSymbols | toTrusted"></span>
+        <div style="white-space: nowrap" ng-repeat="locus in displayLoci">
+          <initially-hidden-text text="{{locus.long_display_name | encodeAlleleSymbols | toTrusted}}"
+                                 preview-char-count="50"
+                                 break-on-comma="true"
+                                 link-label="..."></initially-hidden-text>
+
         </div>
       </a>
       <span ng-if="!addLinks()">
-        <div style="white-space: nowrap" ng-repeat="allele in annotation.alleles">
-          <span ng-bind-html="allele.long_display_name | encodeAlleleSymbols | toTrusted"></span>
+        <div style="white-space: nowrap" ng-repeat="locus in displayLoci">
+          <initially-hidden-text text="{{locus.long_display_name | encodeAlleleSymbols | toTrusted}}"
+                                 preview-char-count="50"
+                                 break-on-comma="true"
+                                 link-label="..."></initially-hidden-text>
         </div>
       </span>
     </span>
     <span ng-if="annotation.status === 'existing'">
-      <div style="white-space: nowrap" ng-repeat="allele in annotation.alleles">
-        <span ng-bind-html="allele.long_display_name | encodeAlleleSymbols | toTrusted"></span>
+      <div style="white-space: nowrap" ng-repeat="locus in displayLoci">
+        <initially-hidden-text text="{{locus.long_display_name | encodeAlleleSymbols | toTrusted}}"
+                               preview-char-count="50"
+                               break-on-comma="true"
+                               link-label="..."></initially-hidden-text>
       </div>
     </span>
   </td>
-  <td ng-class="{ 'term-warning': annotation.is_obsolete_term }">
+  <td ng-if="!data.hideColumns.term_ontid" ng-class="{ 'term-warning': annotation.is_obsolete_term }">
     {{annotation.term_ontid}}
   </td>
   <td ng-class="{ 'term-warning': annotation.is_obsolete_term }">
     {{annotation.term_name}}
   </td>
-  <td>
+  <td ng-if="!data.hideColumns.evidence_code">
     {{annotation.evidence_code}}
   </td>
   <td ng-if="annotationType.can_have_with && !data.hideColumns.with_or_from_identifier">
@@ -61,7 +106,7 @@
   <td ng-if="!data.hideColumns.gene_product_form_id">
     {{annotation.gene_product_form_id || ''}}
   </td>
-  <td ng-if="annotationType.can_have_conditions">
+  <td ng-if="annotationType.can_have_conditions && !data.hideColumns.conditions">
     <span ng-bind-html="annotation.conditionsString | toTrusted"></span>
   </td>
   <td ng-if="!data.hideColumns.qualifiers">
@@ -73,7 +118,7 @@
 {{annotation.term_suggestion_name}}
       </div>
       <div>
-        <initially-hidden-text text="{{annotation.term_suggestion_definition}}" link-label="View definition..."></initially-hidden-text>
+        <initially-hidden-text text="{{annotation.term_suggestion_definition}}" link-label="View definition"></initially-hidden-text>
       </div>
     </div>
   </td>
@@ -81,25 +126,36 @@
     <initially-hidden-text text="{{annotation.submitter_comment}}" preview-char-count="80"
                            link-label=" [more...]"></initially-hidden-text>
   </td>
+  <td ng-if="!data.hideColumns.figure">
+    <initially-hidden-text text="{{annotation.figure}}" preview-char-count="80"
+                           link-label=" [more...]"></initially-hidden-text>
+  </td>
   <td ng-if="!data.hideColumns.extension">
-    <extension-display extension="annotation.extension"></extension-display>
+    <extension-display extension="annotation.extension" hide-relation-names="hideRelationNames">
+    </extension-display>
   </td>
   <td ng-if="!data.hideColumns.curator">
     {{annotation.curator}}
   </td>
   <td class="table-row-actions">
     <div ng-if="addLinks()">
+      <div ng-if="isMetagenotypeAnnotation && isMetagenotypeLinkEnabled()">
+        <a title="View metagenotype for this annotation"
+           href="{{featureLink('metagenotype', annotation.metagenotype_id)}}">View metagenotype</a>
+      </div>
       <div>
         <a title="Edit this annotation" ng-click="edit()">Edit</a>
+      </div>
+      <div ng-if="showTransferLink">
+        <a title="{{'Copy this annotation to other ' + annotationType.feature_type + 's'}}"
+           ng-click="transferAnnotation()">Transfer</a>
       </div>
       <div>
         <a title="Make copy of this annotation and then edit the details"
            ng-click="duplicate()">Copy and edit</a>
       </div>
       <div>
-        <a title="Delete this annotation"
-           confirm="Are you sure you want to delete this annotation?"
-           ng-click="deleteAnnotation()">Delete</a>
+        <a title="Delete this annotation" ng-click="confirmDelete()">Delete</a>
       </div>
       <div ng-if="sessionState == 'APPROVAL_IN_PROGRESS'">
         <a ng-if="checked == 'no'" href="#" ng-click="setChecked($event)">Checked</a>
@@ -111,4 +167,3 @@
     </div>
   </td>
 </tr>
-

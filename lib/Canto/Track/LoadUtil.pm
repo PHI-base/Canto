@@ -43,10 +43,20 @@ use Carp;
 use Moose;
 use Digest::SHA qw(sha1_base64);
 use Try::Tiny;
+use JSON;
 
 use feature qw(state);
 
+use Package::Alias PubmedUtil => 'Canto::Track::PubmedUtil';
+
+use Canto::Curs::GeneManager;
+use Canto::Curs::AlleleManager;
+use Canto::Curs::GenotypeManager;
+use Canto::Curs::Utils;
+
 use Canto::Track;
+
+use Canto::Curs 'EXTERNAL_NOTES_KEY';
 
 has 'schema' => (
   is => 'ro',
@@ -86,9 +96,9 @@ sub _build_cache
 
 =head2 get_organism
 
- Usage   : my $organism = $load_util->get_organism($genus, $species);
+ Usage   : my $organism = $load_util->get_organism($scientific_name, $taxonid);
+       OR: my $organism = $load_util->get_organism($scientific_name, $taxonid, $common_name);
  Function: Find or create, and then return the organism matching the arguments
- Args    : the genus and species of the new organism
  Returns : The found or new organism
 
 =cut
@@ -96,21 +106,96 @@ sub get_organism
 {
   my $self = shift;
 
-  my $genus = shift;
-  my $species = shift;
+  my $scientific_name = shift;
+  my $taxonid = shift;
+  my $common_name = shift;
+
+  croak "no taxon id supplied" unless $taxonid;
+
+  croak "taxon id not a number: $taxonid" unless $taxonid =~ /^\d+$/;
+
+  my $schema = $self->schema();
+
+  my $new_org =
+    $schema->resultset('Organism')->find_or_create(
+      {
+        scientific_name => $scientific_name,
+        organismprops => [ { value => $taxonid,
+                             type => { name => 'taxon_id' },
+                             rank => 0 } ]
+      });
+
+  if ($common_name && !defined $new_org->common_name()) {
+    $new_org->common_name($common_name);
+    $new_org->update();
+  }
+
+  return $new_org;
+}
+
+=head2 find_organism_by_taxonid
+
+ Usage   : my $organism = $load_util->find_organism_by_taxonid($taxonid);
+ Function: Find and return the organism with the given taxonid
+ Returns : the organism object or undef
+
+=cut
+sub find_organism_by_taxonid
+{
+  my $self = shift;
+
+  state $cache = {};
+
   my $taxonid = shift;
 
   croak "no taxon id supplied" unless $taxonid;
 
+  if ($taxonid !~ /^\d+$/) {
+    die qq(taxon ID "$taxonid" isn't numeric\n);
+  }
+
+  if ($cache->{$taxonid}) {
+    return $cache->{$taxonid};
+  }
+
   my $schema = $self->schema();
 
-  return $schema->resultset('Organism')->find_or_create(
+  my $organismprop_rs = $schema->resultset('Organismprop')
+    ->search({'type.name' => 'taxon_id', 'me.value' => $taxonid},
+             { join => 'type', prefetch => 'organism' });
+
+  my $prop = $organismprop_rs->next();
+
+  if ($prop) {
+    my $organism = $prop->organism();
+    $cache->{$taxonid} = $organism;
+    return $organism;
+  }
+
+  return undef;
+}
+
+=head2 get_strain
+
+ Usage   : my $strain = $load_util->get_strain($organism_obj, $strain);
+ Function: Find or create, and then return a new strain object
+ Args    : a organism object and the strain description
+
+=cut
+sub get_strain
+{
+  my $self = shift;
+  my $organism = shift;
+  my $strain = shift;
+
+  croak "no strain supplied" unless $strain;
+
+  my $schema = $self->schema();
+
+  return $schema->resultset('Strain')->find_or_create(
       {
-        genus => $genus,
-        species => $species,
-        organismprops => [ { value => $taxonid,
-                             type => { name => 'taxon_id' },
-                             rank => 0 } ]
+        organism_id => $organism->organism_id(),
+        strain_name => $strain,
       });
 }
 
@@ -675,6 +760,740 @@ sub create_user_session
   $curator_manager->set_curator($curs->curs_key(), $email_address);
 
   return ($curs, $cursdb, $person);
+}
+
+=head2 load_pub_from_pubmed
+
+ Usage   : my ($pub, $err_message) = $load_util->load_pub_from_pubmed($config, $pubmed_id);
+ Function: Query PubMed for the details of the given publication and store
+           the results in the TrackDB
+ Args    : $config - a Config file
+           $pubmed_id - the ID
+ Returns : ($pub_object, undef) on success
+           (undef, "some error message") on failure
+
+=cut
+
+sub load_pub_from_pubmed
+{
+  my $self = shift;
+  my $config = shift;
+  my $pubmedid = shift;
+
+  my $raw_pubmedid;
+
+  $pubmedid =~ s/[^_\d\w:]+//g;
+
+  if ($pubmedid =~ /^\s*(?:pmid:|pubmed:)?(\d+)\s*$/i) {
+    $raw_pubmedid = $1;
+    $pubmedid = "PMID:$1";
+  } else {
+    my $message = 'You need to give the raw numeric ID, or the ID ' .
+      'prefixed by "PMID:" or "PubMed:"';
+    return (undef, $message);
+  }
+
+  my $pub = $self->schema()->resultset('Pub')->find({ uniquename => $pubmedid });
+
+  if (defined $pub) {
+    return ($pub, undef);
+  } else {
+    my $xml = PubmedUtil::get_pubmed_xml_by_ids($config, $raw_pubmedid);
+
+    my $count = PubmedUtil::load_pubmed_xml($self->schema(), $xml, 'user_load');
+
+    if ($count) {
+      $pub = $self->schema()->resultset('Pub')->find({ uniquename => $pubmedid });
+      return ($pub, undef);
+    } else {
+      (my $numericid = $pubmedid) =~ s/.*://;
+      my $message = "No publication found in PubMed with ID: $numericid";
+      return (undef, $message);
+    }
+  }
+}
+
+
+sub _update_allele_details
+{
+  my ($existing_allele, $json_allele_details, $db_genes) = @_;
+
+  my $session_updated = 0;
+
+  if (($existing_allele->name() // '') ne ($json_allele_details->{name} // '')) {
+    $existing_allele->name($json_allele_details->{name});
+    print "updated allele name of ", ($json_allele_details->{name} // ''), "\n";
+    $session_updated = 1;
+  }
+
+  if (($existing_allele->comment() // '') ne ($json_allele_details->{comment} // '')) {
+    $existing_allele->comment($json_allele_details->{comment});
+    print "updated comment of allele ", ($json_allele_details->{name} // ''), "\n";
+    $session_updated = 1;
+  }
+
+  if ($json_allele_details->{type} &&
+        $existing_allele->type() ne $json_allele_details->{type}) {
+    $existing_allele->type($json_allele_details->{type});
+    $session_updated = 1;
+  }
+
+  my $allele_gene_uniquename = $json_allele_details->{gene};
+
+  if ($allele_gene_uniquename && $existing_allele->gene() &&
+        $existing_allele->gene()->primary_identifier() ne $allele_gene_uniquename) {
+    my $new_gene = $db_genes->{$allele_gene_uniquename};
+
+    print qq|gene for "|, $existing_allele->primary_identifier(),
+      qq|" changed from "|, $existing_allele->gene()->primary_identifier(),
+      qq| to "$allele_gene_uniquename"\n|;
+
+    $existing_allele->gene($new_gene);
+    $session_updated = 1;
+  }
+
+  if ($session_updated) {
+    $existing_allele->update();
+  }
+
+  return $session_updated;
+}
+
+
+=head2 create_sessions_from_json
+
+ Usage   : my ($curs, $cursdb, $curator) =
+             $load_util->create_sessions_from_json($config, $file_name, $curator_email_address,
+                                                   $default_organism_taxonid);
+ Function: Create sessions for the JSON data in the given file and set the curator.
+ Args    : $config - the Config object
+           $file_name - the JSON file,
+                        see: https://github.com/pombase/canto/wiki/JSON-Import-Format
+           $curator_email_address - the email address of the user to curate the session,
+                                    the user must exist in the database
+           $default_organism_taxonid - the taxon ID of the organism to attach to any
+                                       single allele genotypes that we create
+ Return  : The Curs object from the Track database, the CursDB object and the
+           Person object for the curator_email_address.
+
+=cut
+sub create_sessions_from_json
+{
+  my $self = shift;
+  my $config = shift;
+  my $file_name = shift;
+  my $curator_email_address = shift;
+  my $default_organism_taxonid = shift;
+
+  my $json_text = do {
+   open(my $json_fh, "<:encoding(UTF-8)", $file_name)
+      or die("Can't open \$filename\": $!\n");
+   local $/;
+   <$json_fh>
+ };
+
+  my $gene_lookup = Canto::Track::get_adaptor($config, 'gene');
+  my $sessions_data = JSON->new->utf8(0)->decode($json_text);
+
+  my $curator_manager = Canto::Track::CuratorManager->new(config => $config);
+
+  my $curator = $self->schema()->resultset('Person')->find({
+    email_address => $curator_email_address,
+  });
+
+  if (!$curator) {
+    die qq|can't find user with email address "$curator_email_address" in the database\n|;
+  }
+
+  # disable connection caching so we don't run out of file descriptors
+  my $connect_options = { cache_connection => 0 };
+
+  my @new_sessions = ();
+  my @updated_sessions = ();
+
+  # load the publication in batches in advance
+  print "loading publications from PubMed\n";
+  PubmedUtil::load_by_ids($config, $self->schema(), [keys %$sessions_data], 'admin_load');
+
+  my $success = 0;
+  my ($curs, $cursdb, $pub) = ();
+  my $using_existing_session = undef;
+
+  my $triage_status_cv = $self->find_cv('Canto publication triage status');
+  my $curation_priority_cv = $self->find_cv('Canto curation priorities');
+
+  my $session_updated = 0;
+
+  print "Creating sessions\n";
+
+ PUB:
+  while (my ($pub_uniquename, $session_data) = each %$sessions_data) {
+    $success = 0;
+
+    $pub = undef;
+    $curs = undef;
+    $cursdb = undef;
+    $using_existing_session = 0;
+    $session_updated = 0;
+
+    my $external_notes = $session_data->{comment};
+
+    my $new_allele_count = 0;
+
+    my $error_message;
+    # the publication should be in the track DB at this point
+    ($pub, $error_message) = $self->load_pub_from_pubmed($config, $pub_uniquename);
+
+    if (!$pub) {
+      die "can't get publication details for $pub_uniquename from PubMed:\n$error_message";
+    }
+
+    my $curs_rs = $pub->curs();
+
+    if ($curs_rs->count() > 0) {
+      if ($curs_rs->count() > 1) {
+        die "more than one session for: $pub_uniquename\n";
+      }
+      $curs = $curs_rs->first();
+      print "updating existing session ", $curs->curs_key(), " for $pub_uniquename\n";
+      $using_existing_session = 1;
+    }
+
+    if ($using_existing_session) {
+      $cursdb = Canto::Curs::get_schema_for_key($config, $curs->curs_key(),
+                                                $connect_options);
+    } else {
+      ($curs, $cursdb) =
+        Canto::Track::create_curs($config, $self->schema(), $pub, $connect_options);
+    }
+
+    my %existing_session_gene_uniquenames = ();
+    my %existing_session_alleles_by_uniquenames = ();
+
+    if ($using_existing_session) {
+      my @existing_genes = $cursdb->resultset('Gene')->all();
+
+      for my $existing_gene (@existing_genes) {
+        $existing_session_gene_uniquenames{$existing_gene->primary_identifier()} = $existing_gene;
+      }
+
+      my @existing_alleles = $cursdb->resultset('Allele')->all();
+
+      for my $existing_allele (@existing_alleles) {
+        $existing_session_alleles_by_uniquenames{$existing_allele->primary_identifier()} = $existing_allele;
+      }
+   }
+
+    my $alleles_from_json = $session_data->{alleles};
+    my $genes_from_json = $session_data->{genes};
+
+    # do some checks for consistency
+    if ($using_existing_session) {
+      my %secondary_gene_identifier_counts = ();
+
+      for my $gene_details (values %$genes_from_json) {
+        for my $secondary_identifier (@{$gene_details->{secondary_identifiers} // []}) {
+          $secondary_gene_identifier_counts{$secondary_identifier}++;
+        }
+      }
+
+      for my $secondary_identifier (keys %secondary_gene_identifier_counts) {
+        if ($secondary_gene_identifier_counts{$secondary_identifier} > 1 &&
+              $existing_session_gene_uniquenames{$secondary_identifier}) {
+          print "two genes in the JSON file have a secondary identifier ",
+            "($secondary_identifier) in common and there is a gene with that ",
+            "identifier in the session - skipping $pub_uniquename\n";
+          next PUB;
+        }
+      }
+
+      my %secondary_allele_identifier_counts = ();
+
+      for my $allele_details (values %$alleles_from_json) {
+        for my $secondary_identifier (@{$allele_details->{secondary_identifiers} // []}) {
+          $secondary_allele_identifier_counts{$secondary_identifier}++;
+        }
+      }
+
+      for my $secondary_identifier (keys %secondary_allele_identifier_counts) {
+        if ($secondary_allele_identifier_counts{$secondary_identifier} > 1 &&
+              $existing_session_alleles_by_uniquenames{$secondary_identifier}) {
+          print "two alleles in the JSON file have a secondary identifier ",
+            "($secondary_identifier) in common and there is a allele with that ",
+            "identifier in the session - skipping $pub_uniquename\n";
+          next PUB;
+        }
+      }
+    }
+
+    my @gene_lookup_results = ();
+
+  GENE:
+    while (my ($json_gene_uniquename, $json_gene_details) = each %$genes_from_json) {
+      if ($using_existing_session) {
+        if ($existing_session_gene_uniquenames{$json_gene_uniquename}) {
+          next GENE;
+        }
+
+        $session_updated = 1;
+
+        for my $secondary_identifier (@{$json_gene_details->{secondary_identifiers} || []}) {
+          my $existing_session_gene = $existing_session_gene_uniquenames{$secondary_identifier};
+
+          if ($existing_session_gene) {
+            $existing_session_gene->primary_identifier($json_gene_uniquename);
+            $existing_session_gene->update();
+            delete $existing_session_gene_uniquenames{$secondary_identifier};
+            $existing_session_gene_uniquenames{$json_gene_uniquename} = $existing_session_gene;
+            next GENE;
+          }
+        }
+
+        print "adding new gene to existing session: $json_gene_uniquename\n";
+      }
+
+      my $lookup_result = $gene_lookup->lookup([$json_gene_uniquename]);
+
+      if (@{$lookup_result->{missing}} != 0) {
+        print "no gene found in the database for ID $json_gene_uniquename, skipping $pub_uniquename\n";
+        next PUB;
+      }
+
+      push @gene_lookup_results, $lookup_result;
+    }
+
+    my $allele_manager =
+      Canto::Curs::AlleleManager->new(config => $config, curs_schema => $cursdb);
+    my $genotype_manager =
+      Canto::Curs::GenotypeManager->new(config => $config, curs_schema => $cursdb);
+    my $gene_manager =
+      Canto::Curs::GeneManager->new(config => $config, curs_schema => $cursdb);
+
+    if (!$using_existing_session) {
+      $curator_manager->set_curator($curs->curs_key(), $curator_email_address);
+    }
+
+    if (!$pub->corresponding_author()) {
+      $pub->corresponding_author($curator);
+      $pub->update();
+    }
+
+    my %db_genes = ();
+
+    @gene_lookup_results = sort {
+      my $a_display_name =
+        lc $a->{found}->[0]->{primary_name} || $a->{found}->[0]->{primary_identifier};
+      my $b_display_name =
+        lc $b->{found}->[0]->{primary_name} || $b->{found}->[0]->{primary_identifier};
+      $a_display_name cmp $b_display_name;
+    } @gene_lookup_results;
+
+    for my $lookup_result (@gene_lookup_results) {
+      my %result = $gene_manager->create_genes_from_lookup($lookup_result);
+
+      while (my ($result_uniquename, $result_gene) = each %result) {
+        $db_genes{$result_uniquename} = $result_gene;
+      }
+    }
+
+    for my $existing_gene_uniquename (keys %existing_session_gene_uniquenames) {
+      $db_genes{$existing_gene_uniquename} =
+        $existing_session_gene_uniquenames{$existing_gene_uniquename};
+    }
+
+    if ($alleles_from_json) {
+      my @genotype_details = ();
+
+    ALLELE:
+      while (my ($allele_uniquename, $json_allele_details) = each %$alleles_from_json) {
+        my $allele_gene_uniquename = $json_allele_details->{gene};
+
+        if ($json_allele_details->{type} ne 'aberration') {
+          if (!defined $allele_gene_uniquename) {
+            print qq|no "gene" field in details for $allele_uniquename in $pub_uniquename\n|;
+            next PUB;
+          }
+
+          my $gene = $db_genes{$allele_gene_uniquename};
+          if (!defined $gene) {
+            print qq|error while loading $pub_uniquename: gene $allele_gene_uniquename (from allele $allele_uniquename) missing from the "genes" section\n|;
+            next PUB;
+          }
+        }
+
+        if ($using_existing_session) {
+          if ($existing_session_alleles_by_uniquenames{$allele_uniquename}) {
+            my $existing_allele = $existing_session_alleles_by_uniquenames{$allele_uniquename};
+            if (_update_allele_details($existing_allele, $json_allele_details, \%db_genes)) {
+              $session_updated = 1;
+            }
+            next;
+          }
+
+          $session_updated = 1;
+
+          for my $secondary_identifier (@{$json_allele_details->{secondary_identifiers} || []}) {
+
+            my $existing_session_allele =
+              $existing_session_alleles_by_uniquenames{$secondary_identifier};
+
+            if ($existing_session_allele) {
+              $existing_session_allele->primary_identifier($allele_uniquename);
+              $existing_session_allele->update();
+              _update_allele_details($existing_session_allele, $json_allele_details, \%db_genes);
+              next ALLELE;
+            }
+          }
+
+          print "adding new allele to existing session: $allele_uniquename\n";
+        }
+
+        $json_allele_details->{source_identifier} = $allele_uniquename;
+
+        my $gene = undef;
+
+        if ($json_allele_details->{type} ne 'aberration') {
+          $gene = $db_genes{$allele_gene_uniquename};
+
+          $json_allele_details->{gene_id} = $gene->gene_id();
+        }
+
+        $json_allele_details->{synonyms} = [map {
+          {
+            edit_status => 'existing',
+            synonym => $_,
+          }
+        } @{$json_allele_details->{synonyms} // []}];
+
+        my $gene_display_name;
+
+        if ($gene) {
+          my $gene_proxy =
+            Canto::Curs::GeneProxy->new(config => $config, cursdb_gene => $gene);
+          $gene_display_name = $gene_proxy->display_name();
+        } else {
+          $gene_display_name = "(aberration)";
+        }
+
+        delete $json_allele_details->{gene};
+
+        my $allele_display_name =
+          Canto::Curs::Utils::make_allele_display_name($config,
+                                                       $json_allele_details->{name},
+                                                       $json_allele_details->{description},
+                                                       $json_allele_details->{type});
+
+        $new_allele_count++;
+
+        push @genotype_details, {
+          allele => $json_allele_details,
+          allele_display_name => lc $allele_display_name,
+          gene_display_name => lc $gene_display_name,
+          identifier => undef,
+          taxonid => $default_organism_taxonid,
+        };
+      }
+
+      @genotype_details = sort {
+        $a->{gene_display_name} cmp $b->{gene_display_name}
+          ||
+        $a->{allele_display_name} cmp $b->{allele_display_name};
+      } @genotype_details;
+
+      for my $genotype_details (@genotype_details) {
+        my $genotype =
+          $genotype_manager->make_genotype(undef, undef, [$genotype_details->{allele}],
+                                           $genotype_details->{taxonid},
+                                           $genotype_details->{identifier}, undef,
+                                           $genotype_details->{comment});
+        my $genotype_allele = ($genotype->alleles()->all())[0];
+
+        my $allele_source_identifier = $genotype_details->{allele}->{source_identifier};
+        $genotype_allele->primary_identifier($allele_source_identifier);
+        $genotype_allele->update();
+      }
+    }
+
+    $success = 1;
+
+    my $triage_status = $session_data->{triage_status};
+
+    if ($triage_status) {
+      my $triage_status_cvterm = $self->find_cvterm(cv => $triage_status_cv,
+                                                    name => $triage_status);
+
+      $pub->triage_status($triage_status_cvterm);
+      $pub->update();
+    }
+
+    my $curation_priority = $session_data->{curation_priority};
+
+    if ($curation_priority) {
+      my $curation_priority_cvterm = $self->find_cvterm(cv => $curation_priority_cv,
+                                                        name => $curation_priority);
+
+      $pub->curation_priority($curation_priority_cvterm);
+      $pub->update();
+    }
+
+    if ($using_existing_session) {
+      # check for alleles that are in the Canto database but aren't in input file
+    ALLELE:
+      for my $allele ($cursdb->resultset('Allele')->all()) {
+        my $allele_primary_identifier = $allele->primary_identifier();
+        if (!exists $alleles_from_json->{$allele_primary_identifier}) {
+          print "allele $allele_primary_identifier - ",
+            $allele->long_identifier($config),
+            " is in the Canto database is not in the JSON input for session: ",
+            $curs->curs_key(), "\n";
+
+          my @allele_genotypes = $allele->genotypes()->all();
+
+          map {
+            my $genotype = $_;
+
+            if ($genotype->annotations()->count() > 0) {
+              print "  can't remove $allele_primary_identifier - one or more ",
+                "genotypes containing this allele has annotation\n";
+              next ALLELE;
+            }
+            if ($genotype->metagenotypes() > 0) {
+              print "  can't remove $allele_primary_identifier - one or more ",
+                "genotypes containing this allele are part of an interaction ",
+                "or metagenotype\n";
+              next ALLELE;
+            }
+          } @allele_genotypes;
+
+          $session_updated = 1;
+          map {
+            my $genotype = $_;
+            $genotype->delete();
+          } @allele_genotypes;
+          $allele->allele_notes()->delete();
+          $allele->allelesynonyms()->delete();
+          $allele->delete();
+          print "  - successfully deleted from the Canto database\n";
+        }
+      }
+
+      # check for genes
+    GENE:
+      for my $gene ($cursdb->resultset('Gene')->all()) {
+        my $gene_primary_identifier = $gene->primary_identifier();
+        if (!exists $genes_from_json->{$gene_primary_identifier}) {
+          print "gene $gene_primary_identifier ",
+            "is in the Canto database is not in the JSON input for session: ",
+            $curs->curs_key(), "\n";
+
+          my @gene_alleles = $gene->alleles();
+
+          map {
+            my $allele = $_;
+
+            my @gene_allele_genotypes = $allele->genotypes()->all();
+
+            map {
+              my $genotype = $_;
+
+              if ($genotype->annotations()->count() > 0) {
+                print "  can't remove $gene_primary_identifier - one or more ",
+                  "genotypes containing an allele from this gene has annotation\n";
+                next GENE;
+              }
+              if ($genotype->metagenotypes() > 0) {
+                print "  can't remove $gene_primary_identifier - one or more ",
+                  "genotypes containing this allele from this gene are part of ",
+                  "an interaction or metagenotype\n";
+                next GENE;
+              }
+
+            } @gene_allele_genotypes;
+          } @gene_alleles;
+
+          $session_updated = 1;
+          $gene->delete();
+          print "  - successfully deleted from the Canto database\n";
+        }
+      }
+
+      if ($new_allele_count > 0) {
+        $session_updated = 1;
+      } else {
+        print "no new alleles adding to session: ", $curs->curs_key(), "\n";
+      }
+    }
+
+    if ($external_notes) {
+      my $curs_metadata_rs = $cursdb->resultset('Metadata');
+      $curs_metadata_rs->update_or_create({ key => Canto::Curs->EXTERNAL_NOTES_KEY,
+                                            value => $external_notes });
+    }
+  } continue {
+    if ($session_updated) {
+      push @updated_sessions, $curs;
+    }
+
+    if (!$using_existing_session) {
+      if ($success) {
+        push @new_sessions, $curs;
+        print "created session: ", $curs->curs_key(), " pub: ", $pub->uniquename(),
+          " for: $curator_email_address\n";
+        $success = 0;
+      } else {
+        print "no session created for ", $pub->uniquename(), " due to an error\n";
+        if (defined $curs) {
+          Canto::Track::delete_curs($config, $self->schema(), $curs->curs_key());
+        }
+      }
+    }
+  }
+
+  return (\@new_sessions, \@updated_sessions);
+}
+
+=head2 load_strains
+
+ Usage   : $load_util->load_util($strain_file_name);
+ Function: Load strains and strain synonyms from a file.  Existing strains are
+           retained but synonyms are replaced.  The input file is comma
+           separated with these columns:
+             - taxon ID
+             - species common name
+             - strain name
+             - synonyms - comma separated and quoted
+ Returns : nothing
+
+=cut
+
+sub load_strains
+{
+  my $self = shift;
+  my $config = shift;
+  my $file_name = shift;
+
+  open my $fh, '<', $file_name or die "can't open $file_name: $!";
+
+  my $csv = Text::CSV->new({ blank_is_undef => 1, binary => 1, auto_diag => 1  });
+
+  my %strains_by_name = ();
+  my %strains_by_synonym = ();
+
+  while (my $row = $csv->getline($fh)) {
+
+    next if lc $row->[0] eq 'ncbitaxspeciesid' && $. == 1;
+
+    my ($taxonid, $common_name, $strain_name, $synonyms) = @$row;
+
+    if ($taxonid !~ /^\d+$/) {
+      die qq(load failed - taxon ID in first column of line $. isn't an integer: $taxonid\n);
+    }
+
+    $strain_name =~ s/^\s+//;
+    $strain_name =~ s/\s+$//;
+
+    my $organism = $self->find_organism_by_taxonid($taxonid);
+
+    if (!$organism) {
+      die qq(load failed - no organism with taxon ID "$taxonid" found in the database\n);
+    }
+
+    my $strain = $self->get_strain($organism, $strain_name);
+
+    my $name_key = "$taxonid:$strain_name";
+    if (exists $strains_by_name{$name_key}) {
+      die qq(load failed - strain name "$strain_name" for taxon $taxonid is duplicated in $file_name\n);
+    } else {
+      $strains_by_name{$name_key} = $strain;
+    }
+
+    $strain->strainsynonyms()->delete_all();
+
+    if (defined $synonyms) {
+      map {
+        my $synonym = $_;
+        $synonym =~ s/^\s+//;
+        $synonym =~ s/\s+$//;
+        $self->schema()->create_with_type('Strainsynonym', {
+          strain => $strain,
+          synonym => $synonym,
+        });
+
+        my $synonym_key = "$taxonid:$synonym";
+        if (exists $strains_by_synonym{$synonym_key}) {
+          if (@{$strains_by_synonym{$synonym_key}} == 1) {
+
+            warn qq(Warning: strain synonym "$synonym" for strain "$strain_name" for taxon $taxonid is duplicated in $file_name\n);
+          }
+
+          # If there is more than one element in the array, any
+          # strains in sessions we the name $synonym_key are prevented
+          # from finding a track strain.
+          # It needs manual intervention in that case.
+          my $other_strains = $strains_by_synonym{$synonym_key};
+          push @{$strains_by_synonym{$synonym_key}}, $strain;
+        } else {
+          $strains_by_synonym{$synonym_key} = [$strain];
+        }
+
+      } split /,/, $synonyms;
+    }
+  }
+
+  my $curs_fix_proc = sub {
+    my $curs = shift;
+    my $curs_schema = shift;
+    my $track_schema = shift;
+
+    my $curs_strain_rs = $curs_schema->resultset('Strain')
+      ->search({ track_strain_id => undef },
+               { prefetch => 'organism' });
+    while (defined (my $curs_strain = $curs_strain_rs->next())) {
+      my $curs_organism = $curs_strain->organism();
+      my $curs_strain_name = $curs_strain->strain_name();
+      my $curs_taxon = $curs_organism->taxonid();
+      my $name_key = $curs_taxon . ":$curs_strain_name";
+      my $track_strain_by_name = $strains_by_name{$name_key};
+
+      my $track_strains_by_synonym = $strains_by_synonym{$name_key};
+
+      if (defined $track_strain_by_name && defined $track_strains_by_synonym) {
+        my @all_strains = @$track_strains_by_synonym;
+        warn qq(The strain "$name_key" in session ), $curs->curs_key(),
+          " is ambiguous as there is a strain in the track database with that ",
+          "name and also a strain synonym with that name.\n";
+        warn qq(Strains of taxon $curs_taxon with "$curs_strain_name" as a synonym: ),
+          (join ", ", map {
+            $_->strain_name()
+          } @all_strains), "\n";
+      } else {
+        if (defined $track_strains_by_synonym && @$track_strains_by_synonym > 1) {
+          warn qq(The strain "$name_key" in session ), $curs->curs_key(),
+            " is ambiguous as there is more than one strain in the track DB ",
+            "with that name as a synonym.\n";
+          warn qq(Strains of taxon $curs_taxon with "$curs_strain_name" as a synonym: ),
+            (join ", ", map {
+              $_->strain_name()
+            } @$track_strains_by_synonym), "\n";
+        } else {
+          my $track_strain = $track_strain_by_name;
+          if (!defined $track_strain) {
+            if (defined $track_strains_by_synonym) {
+              $track_strain = $track_strains_by_synonym->[0];
+            }
+          }
+
+          if ($track_strain) {
+            $curs_strain->strain_name(undef);
+            $curs_strain->track_strain_id($track_strain->strain_id());
+            $curs_strain->update();
+          }
+        }
+      }
+    }
+  };
+
+  Canto::Track::curs_map($config, $self->schema(), $curs_fix_proc);
 }
 
 1;

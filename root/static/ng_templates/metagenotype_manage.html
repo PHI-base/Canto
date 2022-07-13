@@ -1,0 +1,54 @@
+<div id="curs-genotype-manage" class="genotype-list ng-cloak container">
+    <div class="row" ng-if="display">
+        <div>
+            <p>Choose a pathogen and host genotype to combine into a metagenotype.</p>
+        </div>
+        <div class="curs-metagenotype-picker-columns">
+            <div class="curs-metagenotype-picker-column-pathogen">
+                <div class="curs-metagenotype-picker-heading">Pathogen</div>
+                <organism-selector
+                    organisms="pathogenOrganisms"
+                    organism-selected="onPathogenSelected(organism)"
+                    allow-unset="true">
+                </organism-selector>
+                <metagenotype-genotype-picker
+                    is-host="false"
+                    selected-organism="selectedPathogen"
+                    genotypes="selectedPathogenGenotypes"
+                    on-genotype-select="onPathogenGenotypeSelect(genotype)">
+                </metagenotype-genotype-picker>
+            </div>
+            <div class="curs-metagenotype-picker-column-host">
+                <div class="curs-metagenotype-picker-heading">Host</div>
+                <organism-selector
+                    organisms="hostOrganisms"
+                    organism-selected="onHostSelected(organism)"
+                    allow-unset="true">
+                </organism-selector>
+                <metagenotype-genotype-picker
+                    is-host="true"
+                    selected-organism="selectedHost"
+                    genotypes="selectedHostGenotypes"
+                    on-genotype-select="onHostGenotypeSelect(genotype)"
+                    on-strain-select="onHostStrainSelect(strain)">
+                </metagenotype-genotype-picker>
+            </div>
+        </div>
+    </div>
+    <div class="row">
+        <button ng-click="toGenotype()" type="button" class="btn btn-primary curs-back-button">
+            &larr; Go to Summary
+        </button>
+        <button
+            ng-click="createMetagenotype()"
+            type="button"
+            class="btn btn-primary curs-back-button"
+            ng-disabled="isMetagenotypeInvalid()"
+            ng-if="display">
+            Make metagenotype
+        </button>
+    </div>
+    <div class="row">
+      <metagenotype-list-view metagenotypes="filteredMetagenotypes"></metagenotype-list-view>
+    </div>
+</div>

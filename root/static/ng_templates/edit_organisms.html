@@ -1,0 +1,12 @@
+<div>
+  <edit-organisms-table table-title="Pathogen genes" organisms="getPathogens"></edit-organisms-table>
+  <edit-organisms-table table-title="Host genes" organisms="getHosts"></edit-organisms-table>
+  <div ng-switch="getWarningType()" class="curs-warning-container">
+    <span ng-switch-when="gene" class="curs-warning">Add at least one pathogen gene before continuing.</span>
+    <span ng-switch-when="strain" class="curs-warning">Specify strains for all organisms before continuing.</span>
+  </div>
+  <div class="submit">
+    <a ng-if="!readOnlyMode" href="{{addGenesUrl}}" class="btn btn-primary">Add more genes and organisms</a>&nbsp;
+    <button ng-click="goToSummaryPage()" ng-disabled="isContinueUrlDisabled()" class="btn btn-primary" title="{{ getContinueButtonTitle() }}">Continue</a>
+  </div>
+</div>

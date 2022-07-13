@@ -53,6 +53,7 @@ has cursdb_gene => (is => 'ro', required => 1,
                       delete => 'delete',
                     });
 has gene_lookup => (is => 'ro', init_arg => undef, lazy_build => 1);
+has organism_lookup => (is => 'ro', init_arg => undef, lazy_build => 1);
 has primary_name => (is => 'ro', init_arg => undef, lazy_build => 1);
 has display_name => (is => 'ro', init_arg => undef, lazy_build => 1);
 has product => (is => 'ro', init_arg => undef, lazy_build => 1);
@@ -62,7 +63,7 @@ has synonyms_ref => (is => 'ro', init_arg => undef, lazy_build => 1,
                  handles => { synonyms => 'elements' },
                );
 has gene_data => (is => 'ro', init_arg => undef, lazy_build => 1);
-has organism => (is => 'ro', init_arg => undef, lazy_build => 1);
+has organism_details => (is => 'ro', init_arg => undef, lazy_build => 1);
 has taxonid => (is => 'ro', init_arg => undef, lazy_build => 1);
 
 with 'Canto::Role::Configurable';
@@ -73,6 +74,8 @@ sub BUILD
   my $self = shift;
 
   if (!defined $self->cursdb_gene()) {
+    use Carp qw(longmess);
+    warn longmess();
     croak "No cursdb_gene passed to GeneProxy";
   }
 }
@@ -82,6 +85,13 @@ sub _build_gene_lookup
   my $self = shift;
 
   return Canto::Track::get_adaptor($self->config(), 'gene');
+}
+
+sub _build_organism_lookup
+{
+  my $self = shift;
+
+  return Canto::Track::get_adaptor($self->config(), 'organism');
 }
 
 sub _build_gene_data
@@ -151,11 +161,23 @@ sub _build_taxonid
   return $self->gene_data()->{organism_taxonid};
 }
 
-sub _build_organism
+sub _build_organism_details
 {
   my $self = shift;
 
-  return $self->cursdb_gene()->organism();
+  my $details = $self->organism_lookup()->lookup_by_taxonid($self->taxonid());
+
+  if (defined $details) {
+    return $details;
+  } else {
+    return {
+      common_name => undef,
+      full_name => 'Unknown unknown',
+      pathogen_or_host => 'unknown',
+      scientific_name => 'Unknown unknown',
+      taxonid => $self->taxonid(),
+    }
+  }
 }
 
 1;
