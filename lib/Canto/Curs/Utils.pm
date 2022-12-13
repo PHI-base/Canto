@@ -63,6 +63,145 @@ sub _make_allelesynonym_hashes
   } $allele->allelesynonyms()->all();
 }
 
+# return a table of symmetrical interaction annotations from a
+# GenotypeInteraction ResultSet
+sub _get_interaction_annotations
+{
+  my $config = shift;
+  my $rs = shift;
+
+  my %interactions = ();
+
+  my $interaction_rs =
+    $rs->search({},
+                {
+                  prefetch => ['genotype_a', 'genotype_b'],
+                });
+
+  while (defined (my $interaction_row = $interaction_rs->next())) {
+    my $key = $interaction_row->genotype_a()->genotype_id() . '-' .
+      $interaction_row->interaction_type() . '-' .
+      $interaction_row->genotype_b()->genotype_id();
+
+    my $interaction = undef;
+
+    if (!exists $interactions{$key}) {
+      my $genotype_a = $interaction_row->genotype_a();
+      my $genotype_b = $interaction_row->genotype_b();
+
+      $interaction = {
+        interaction_type => $interaction_row->interaction_type(),
+        genotype_a => {
+          genotype_id => $genotype_a->genotype_id(),
+          display_name => $genotype_a->display_name($config),
+        },
+        genotype_b => {
+          genotype_id => $genotype_b->genotype_id(),
+          display_name => $genotype_b->display_name($config),
+        },
+        status => 'new',
+      };
+      $interactions{$key} = $interaction;
+    }
+  }
+
+  return (values %interactions);
+}
+
+# given an Annotation, return the associated symmetrical interactions
+sub _get_interaction_annotations_from_annotation
+{
+  my $config = shift;
+  my $annotation = shift;
+
+  my %interactions = ();
+
+  my $interaction_rs = $annotation->genotype_annotations()
+    ->search_related('genotype_interactions');
+
+  return _get_interaction_annotations($config, $interaction_rs)
+}
+
+# return a table of directional interaction annotations from a
+# GenotypeInteractionWithPhenotype ResultSet
+sub _get_interaction_annotations_with_phenotypes
+{
+  my $config = shift;
+  my $schema = shift;
+  my $rs = shift;
+  my $ontology_lookup = shift;
+  my $organism_lookup = shift;
+
+  my %interactions = ();
+
+  my $interaction_rs =
+    $rs->search({},
+                {
+                  prefetch => [
+                    {
+                      genotype_annotation_a => [
+                        ['genotype', 'annotation'],
+                      ]
+                    },
+                    'genotype_b',],
+                });
+
+  while (defined (my $interaction_row = $interaction_rs->next())) {
+    my $genotype_annotation_a = $interaction_row->genotype_annotation_a();
+    my $key = $genotype_annotation_a->genotype()->genotype_id() . '-' .
+      $interaction_row->interaction_type() . '-' .
+      $interaction_row->genotype_b()->genotype_id();
+
+    my $interaction = undef;
+
+    if (exists $interactions{$key}) {
+      $interaction = $interactions{$key};
+    } else {
+      my $genotype_a = $genotype_annotation_a->genotype();
+      my $genotype_b = $interaction_row->genotype_b();
+
+      $interaction = {
+        interaction_type => $interaction_row->interaction_type(),
+        genotype_a => {
+          genotype_id => $genotype_a->genotype_id(),
+          display_name => $genotype_a->display_name($config),
+        },
+        genotype_b => {
+          genotype_id => $genotype_b->genotype_id(),
+          display_name => $genotype_b->display_name($config),
+        },
+        status => 'new',
+      };
+      $interactions{$key} = $interaction;
+    }
+
+    push @{$interaction->{genotype_a_phenotype_annotations}},
+      make_ontology_annotation($config, $schema, $genotype_annotation_a->annotation(),
+                               $ontology_lookup, $organism_lookup, 0, 0);
+  }
+
+  return (values %interactions);
+}
+
+
+# given an Annotation, return the associated directional interactions
+sub _get_interaction_annotations_with_phenotypes_from_annotation
+{
+  my $config = shift;
+  my $schema = shift;
+  my $annotation = shift;
+  my $ontology_lookup = shift;
+  my $organism_lookup = shift;
+
+  my %interactions = ();
+
+  my $interaction_rs = $annotation->genotype_annotations()
+    ->search_related('genotype_interactions_with_phenotype_primary_genotype_annotation');
+
+  return _get_interaction_annotations_with_phenotypes($config, $schema, $interaction_rs,
+                                                      $ontology_lookup, $organism_lookup);
+}
+
 sub _make_genotype_details
 {
   my $curs_schema = shift;
@@ -189,7 +328,7 @@ sub _make_genotype_details
 
   my $genotype_display_name = $genotype->display_name($config);
 
-  return (
+  my @res = (
     genotype_id => $genotype->genotype_id(),
     genotype_identifier => $genotype->identifier(),
     genotype_name => $genotype->name(),
@@ -202,6 +341,8 @@ sub _make_genotype_details
     feature_id => $genotype->genotype_id(),
     alleles => [@allele_hashes],
   );
+
+  return @res;
 }
 
 =head2 make_metagenotype_details
@@ -247,11 +388,14 @@ sub make_metagenotype_details
 
   my $metagenotype_display_name =
     $pathogen_genotype_details{genotype_display_name} . ' ' .
-    $pathogen_genotype_details{organism}->{full_name} . ' (' .
-    $pathogen_genotype_details{strain_name} . ') / ' .
+    $pathogen_genotype_details{organism}->{full_name} .
+    (defined $pathogen_genotype_details{strain_name} ? ' (' .
+     $pathogen_genotype_details{strain_name} . ')' : '') .
+    ' / ' .
     $host_genotype_details{genotype_display_name} . ' ' .
-    $host_genotype_details{organism}->{full_name} . ' (' .
-    $host_genotype_details{strain_name} . ')';
+    $host_genotype_details{organism}->{full_name} .
+    (defined $host_genotype_details{strain_name} ? ' (' .
+     $host_genotype_details{strain_name} . ')' : '');
 
   return (
     pathogen_genotype => \%pathogen_genotype_details,
@@ -317,6 +461,8 @@ sub make_ontology_annotation
     Canto::Track::get_adaptor($config, 'ontology');
   my $organism_lookup = shift //
     Canto::Track::get_adaptor($config, 'organism');
+  my $include_feature_details = shift // 1;
+  my $include_associated_interaction_details = shift // 1;
 
   my $data = $annotation->data();
   my $term_ontid = $data->{term_ontid};
@@ -342,7 +488,7 @@ sub make_ontology_annotation
   my %genotype_details = ();
   my %metagenotype_details = ();
 
-  if ($feature_type eq 'genotype') {
+  if ($include_feature_details && $feature_type eq 'genotype') {
     my @annotation_genotypes = $annotation->genotypes();
 
     if (@annotation_genotypes > 1) {
@@ -360,7 +506,7 @@ sub make_ontology_annotation
                                                $ontology_lookup, $organism_lookup);
   }
 
-  if ($feature_type eq 'metagenotype') {
+  if ($include_feature_details && $feature_type eq 'metagenotype') {
     my @annotation_metagenotypes = $annotation->metagenotypes();
 
     if (@annotation_metagenotypes > 1) {
@@ -378,7 +524,7 @@ sub make_ontology_annotation
                                                        $ontology_lookup, $organism_lookup);
   }
 
-  if ($feature_type eq 'gene') {
+  if ($include_feature_details && $feature_type eq 'gene') {
     my @annotation_genes = $annotation->genes();
 
     if (@annotation_genes > 1) {
@@ -497,6 +643,29 @@ sub make_ontology_annotation
     is_not => JSON::false,
     checked => $data->{checked} || 'no',
   };
+
+  if ($include_associated_interaction_details &&
+      defined $annotation_type_config->{associated_interaction_annotation_type}) {
+    $ret->{interaction_annotations_with_phenotypes} = [];
+    $ret->{interaction_annotations} = [];
+
+    my @interaction_annotations =
+      _get_interaction_annotations_from_annotation($config, $annotation);
+
+    if (@interaction_annotations) {
+      $ret->{interaction_annotations} = \@interaction_annotations;
+    }
+
+    my @interaction_annotations_with_phenotypes =
+      _get_interaction_annotations_with_phenotypes_from_annotation($config,
+                                                       $schema, $annotation,
+                                                       $ontology_lookup, $organism_lookup);
+
+    if (@interaction_annotations_with_phenotypes) {
+      $ret->{interaction_annotations_with_phenotypes} =
+        \@interaction_annotations_with_phenotypes;
+    }
+  }
 
   if ($feature_type ne 'gene') {
     $ret->{conditions} =
@@ -643,171 +812,71 @@ sub make_gene_interaction_annotation
 };
 
 
-=head2 make_interaction_annotation
+=head2 make_interaction_annotations
 
- Usage   : my $hash = Canto::Curs::Utils::make_interaction_annotation(...);
- Function: Retrieve the details of an interaction annotation from the CursDB as
-           a hash
+ Usage   : my $hash = Canto::Curs::Utils::make_interaction_annotations(...);
+ Function: Retrieve the details of any interaction annotations from the
+           phenotype Annotation argument
  Args    : $config - a Config object
            $schema - the CursDB schema
            $annotation - the Annotation to dump as a hash
+           $ontology_lookup
+           $organism_lookup
 
 =cut
 
-sub make_interaction_annotation
+sub make_interaction_annotations
 {
   my $config = shift;
   my $schema = shift;
   my $annotation = shift;
+  my $ontology_lookup = shift;
+  my $organism_lookup = shift;
 
   my $annotation_type = $annotation->type();
 
   my $annotation_config = $config->{annotation_types}->{$annotation_type};
 
-  if ($annotation_config->{feature_type} eq 'gene') {
-    return make_gene_interaction_annotation($config, $schema, $annotation);
-  }
+  my @sym_genotype_interactions =
+    _get_interaction_annotations_from_annotation($config, $annotation);
 
-  my $ontology_lookup = shift //
-    Canto::Track::get_adaptor($config, 'ontology');
-  my $organism_lookup = shift //
-    Canto::Track::get_adaptor($config, 'organism');
+  my @dir_genotype_interactions =
+    _get_interaction_annotations_with_phenotypes_from_annotation($config,
+                                                     $schema, $annotation,
+                                                     $ontology_lookup, $organism_lookup);
 
-
-  my @metagenotype_annotations = $annotation->metagenotype_annotations()
-    ->search({ },
-             { prefetch => {
-               metagenotype => {
-                 first_genotype => 'organism',
-                 second_genotype => 'organism'
-               }
-             } });
-
-  if (@metagenotype_annotations > 1) {
-    die "internal error, more than one metagenotype for annotation: ",
-      $annotation->annotation_id();
-  }
-
-  my $metagenotype = $metagenotype_annotations[0]->metagenotype();
-
-  my $genotype_a = $metagenotype->first_genotype();
-  my $genotype_b = $metagenotype->second_genotype();
-
-  my %genotype_a_details = _make_genotype_details($schema, $genotype_a, $config,
-                                                  $ontology_lookup, $organism_lookup);
-  my %genotype_b_details = _make_genotype_details($schema, $genotype_b, $config,
-                                                  $ontology_lookup, $organism_lookup);
-
-  my $organism_a = $genotype_a->organism();
-  my $organism_b = $genotype_b->organism();
-
-  my @genotype_a_gene_ids =
+  return
     map {
-      my $gene = $_;
-      $gene->gene_id();
-    }
-    grep {
-      my $gene = $_;
-      defined $gene;
-    } map {
-      my $allele = $_;
-      $allele->gene();
-    } $genotype_a->alleles();
+      my $entry = $_;
 
-  my @genotype_b_gene_ids =
-    map {
-      my $gene = $_;
-      $gene->gene_id();
-    }
-    grep {
-      my $gene = $_;
-      defined $gene;
-    } map {
-      my $allele = $_;
-      $allele->gene();
-    } $genotype_b->alleles();
+      my $data = $annotation->data();
+      my $term_ontid = $data->{term_ontid};
 
+      $entry->{term_ontid} = $term_ontid;
 
-  my $is_inferred_annotation = 0;
+      my $term_lookup_result = $ontology_lookup->lookup_by_id(id => $term_ontid);
 
-  my $data = $annotation->data();
-  my $evidence_code = $data->{evidence_code};
+      my $term_name = undef;
 
-  my $term_name = '';
+      if (defined $term_lookup_result) {
+        $term_name = $term_lookup_result->{name};
+      } else {
+        warn qq(internal error: cannot find details for "$term_ontid" in "$annotation_type");
+        $term_name = "[UNKNOWN TERM]";
+      }
 
-  my $term_ontid = $data->{term_ontid};
-  my $is_obsolete_term = undef;
+      $entry->{term_name} = $term_name;
+      $entry->{double_mutant_phenotype_extension} = $data->{extension};
 
-  if ($term_ontid) {
-    my $term_lookup_result = $ontology_lookup->lookup_by_id(id => $term_ontid);
+      $entry->{annotation_type} =
+        $annotation_config->{associated_interaction_annotation_type}->{name};
+      $entry->{feature_type} =
+        $annotation_config->{feature_type};
+      $entry->{double_mutant_genotype_id} =
+        $annotation->genotypes()->first()->feature_id();
 
-    if (! defined $term_lookup_result) {
-      warn qq(internal error: cannot find details for "$term_ontid" in "$annotation_type");
-      $term_lookup_result = {
-        name => "[UNKNOWN TERM]",
-        is_obsolete => 1,
-      };
-    }
-
-    $term_name = $term_lookup_result->{name};
-    $is_obsolete_term = $term_lookup_result->{is_obsolete};
-  }
-
-  my %annotation_types_config = %{$config->{annotation_types}};
-  my $annotation_type_config = $annotation_types_config{$annotation_type};
-  my $annotation_type_display_name = $annotation_type_config->{display_name};
-
-  my $pub_uniquename = $annotation->pub()->uniquename();
-  my $curator = undef;
-  if (defined $data->{curator}) {
-    $curator = $data->{curator}->{name} . ' <' . $data->{curator}->{email} . '>';
-  }
-
-  my $organism_hash = clone $organism_lookup->lookup_by_taxonid($organism_a->taxonid());
-
-  delete $organism_hash->{genes};
-
-  my $entry =
-    {
-      organism => $organism_hash,
-      annotation_type => $annotation_type,
-      annotation_type_display_name => $annotation_type_display_name,
-      genotype_a_display_name => $genotype_a_details{genotype_display_name},
-      genotype_a_id => $genotype_a->genotype_id(),
-      genotype_a_taxonid => $organism_a->taxonid(),
-      feature_a_display_name => $genotype_a_details{genotype_display_name},
-      feature_a_id => $genotype_a->genotype_id(),
-      feature_a_taxonid => $organism_a->taxonid(),
-      genotype_a_gene_ids => \@genotype_a_gene_ids,
-      publication_uniquename => $pub_uniquename,
-      evidence_code => $evidence_code,
-      genotype_b_display_name => $genotype_b_details{genotype_display_name},
-      genotype_b_id => $genotype_b->genotype_id(),
-      genotype_b_taxonid => $organism_b->taxonid(),
-      feature_b_display_name => $genotype_b_details{genotype_display_name},
-      feature_b_id => $genotype_b->genotype_id(),
-      feature_b_taxonid => $organism_b->taxonid(),
-      genotype_b_gene_ids => \@genotype_b_gene_ids,
-      score => '',  # for biogrid format output
-      submitter_comment => $data->{submitter_comment} // '',
-      figure => $data->{figure} // '',
-      term_ontid => $term_ontid,
-      term_name => $term_name,
-      is_obsolete_term => $is_obsolete_term,
-      extension => $data->{extension} || [],
-      completed => 1,
-      annotation_id => $annotation->annotation_id(),
-      annotation_type => $annotation_type,
-      status => $annotation->status(),
-      curator => $curator,
-      is_inferred_annotation => $is_inferred_annotation,
-      checked => $data->{checked} || 'no',
-    };
-
-  $entry->{conditions} =
-    [Canto::Curs::ConditionUtil::get_conditions_with_names($ontology_lookup, $data->{conditions})];
-
-  return $entry;
+      $entry;
+    } (@sym_genotype_interactions, @dir_genotype_interactions);
 };
 
 =head2 get_annotation_table
@@ -879,9 +948,17 @@ sub get_annotation_table
 
   my $completed_count = 0;
 
-  my %constraints = (
-    type => $annotation_type_name,
-  );
+  my %constraints = ();
+
+  if ($annotation_type_category eq 'genotype_interaction') {
+    $constraints{type} = $annotation_type_config->{associated_phenotype_annotation_type};
+    if (!$constraints{type}) {
+      warn "no associated_phenotype_annotation_type configured for annotation type: ",
+        $annotation_type_config->{name}, "\n";
+    }
+  } else {
+    $constraints{type} = $annotation_type_name;
+  }
 
   if ($constrain_annotations) {
     if (ref $constrain_annotations eq 'ARRAY') {
@@ -903,21 +980,53 @@ sub get_annotation_table
     my @entries;
     if ($annotation_type_category eq 'ontology') {
       @entries = make_ontology_annotation($config, $schema, $annotation,
-                                          $ontology_lookup, $organism_lookup);
+                                          $ontology_lookup, $organism_lookup, 1, 1);
     } else {
       if ($annotation_type_category eq 'interaction') {
-
-        @entries = make_interaction_annotation($config, $schema, $annotation,
-                                               $ontology_lookup, $organism_lookup);
+        @entries = make_gene_interaction_annotation($config, $schema,
+                                                    $annotation);
       } else {
-        die "unknown annotation type category: $annotation_type_category\n";
+        if ($annotation_type_category eq 'genotype_interaction') {
+          @entries = make_interaction_annotations($config, $schema,
+                                                  $annotation,
+                                                  $ontology_lookup,
+                                                  $organism_lookup);
+        } else {
+          die "unknown annotation type category: $annotation_type_category\n";
+        }
       }
     }
+
     push @annotations, @entries;
     map { $completed_count++ if $_->{completed} } @entries;
   }
 
   return ($completed_count, [@annotations])
+}
+
+sub _add_ext_range_display_values
+{
+  my $ontology_lookup = shift;
+  my $extension = shift;
+
+  map {
+    my $or_group = $_;
+
+    map {
+      my $and_group = $_;
+
+      if ((!defined $and_group->{rangeType} || $and_group->{rangeType} eq 'Ontology') &&
+          !defined $and_group->{rangeDisplayName} &&
+          defined $and_group->{rangeValue} &&
+          $and_group->{rangeValue} =~ /^[A-Z_]+:\d+$/) {
+        my $res = $ontology_lookup->lookup_by_id(id => $and_group->{rangeValue});
+
+        if ($res && $res->{name}) {
+          $and_group->{rangeDisplayName} = $res->{name};
+        }
+      }
+    } @$or_group;
+  } @$extension
 }
 
 sub _process_existing_db_ontology
@@ -1002,6 +1111,12 @@ sub _process_existing_db_ontology
         $genotype_id = $db_genotype->genotype_id();
       }
     }
+  }
+
+  my $extension = $row->{extension};
+
+  if (defined $extension) {
+    _add_ext_range_display_values($ontology_lookup, $extension);
   }
 
   my %ret = (
@@ -1156,6 +1271,7 @@ sub _process_interaction
     annotation_type => $row->{annotation_type},
     gene_identifier => $gene->{identifier},
     gene_display_name => $gene->{name} // $gene->{identifier},
+    feature_a_display_name => $gene->{name} // $gene->{identifier},
     gene_taxonid => $gene->{taxonid},
     gene_id => $gene_id,
     feature_a_display_name => $gene->{name} // $gene->{identifier},
@@ -1163,6 +1279,8 @@ sub _process_interaction
     evidence_code => $row->{evidence_code},
     interacting_gene_identifier => $interacting_gene->{identifier},
     interacting_gene_display_name =>
+      $interacting_gene->{name} // $interacting_gene->{identifier},
+    feature_b_display_name =>
       $interacting_gene->{name} // $interacting_gene->{identifier},
     interacting_gene_taxonid => $interacting_gene->{taxonid},
     interacting_gene_id => $interacting_gene_id,
@@ -1235,12 +1353,71 @@ sub get_existing_interaction_annotations
   return ($all_interactions_count, \@res);
 }
 
+=head2 get_existing_genotype_interactions
+
+ Usage   :
+   my ($all_existing_annotations_count, $annotations) =
+      Canto::Curs::Utils::get_existing_genotype_interactions($config, $curs_schema, $options);
+ Function: Return a count of the all the matching genotype-genotype interactions
+           and table of the existing interactions from the database with at most
+           max_results rows
+ Args    : $config - the Canto::Config object
+           $options->{pub_uniquename} - the publication ID (eg. PubMed ID)
+               to retrieve annotations from
+           $options->{gene_identifier} - the gene identifier to use to constrain
+               the search; only annotations for the gene are returned (optional)
+           $options->{max_results} - maximum number of interactions to return
+ Returns : An array of hashes containing the annotations in the same form as
+           get_annotation_table(), except that annotation_id will be a
+           database identifier for the annotation.
+
+=cut
+sub get_existing_genotype_interactions
+{
+  my $config = shift;
+  my $curs_schema = shift;
+  my $options = shift;
+
+  my $pub_uniquename = $options->{pub_uniquename};
+  my $gene_identifier = $options->{gene_identifier};
+  my $interaction_type_name = $options->{annotation_type_name};
+  my $max_results = $options->{max_results};
+
+  my $args = {
+    pub_uniquename => $pub_uniquename,
+    gene_identifier => $gene_identifier,
+    interaction_type_name => $interaction_type_name,
+    max_results => $max_results,
+  };
+
+  my $annotation_lookup =
+    Canto::Track::get_adaptor($config, 'genotype_interaction');
+
+  if (defined $annotation_lookup) {
+    my ($all_interactions_count, $lookup_ret_interactions) =
+      $annotation_lookup->lookup($args);
+    if (!defined $all_interactions_count) {
+      use Data::Dumper;
+      die "annotation lookup returned undef count for args: ",
+        Dumper([$args]);
+    }
+
+    map {
+      $_->{annotation_type} = $interaction_type_name;
+    } @$lookup_ret_interactions;
+
+    return ($all_interactions_count, $lookup_ret_interactions);
+  } else {
+    return (0, []);
+  }
+}
+
 =head2 get_existing_annotations
 
  Usage   :
    my ($all_annotations_count, $annotations) =
      Canto::Curs::Utils::get_existing_annotations($config, $curs_schema, $options);
- Function: Return a table of the existing interaction annotations from the
+ Function: Return a table of the existing annotations from the Chado
            database
  Args    : $config - the Canto::Config object
            $options->{pub_uniquename} - the publication ID (eg. PubMed ID)
@@ -1267,7 +1444,11 @@ sub get_existing_annotations
   if ($annotation_type_category eq 'ontology') {
     return get_existing_ontology_annotations($config, $curs_schema, $options);
   } else {
-    return get_existing_interaction_annotations($config, $curs_schema, $options);
+    if ($annotation_type_category eq 'genotype_interaction') {
+      return get_existing_genotype_interactions($config, $curs_schema, $options)
+    } else {
+      return get_existing_interaction_annotations($config, $curs_schema, $options);
+    }
   }
 }
 

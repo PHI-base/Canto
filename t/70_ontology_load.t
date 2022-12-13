@@ -16,7 +16,7 @@ my $schema = Canto::TrackDB->new(config => $config);
 
 my @loaded_cvterms = $schema->resultset('Cvterm')->all();
 
-is (@loaded_cvterms, 71);
+is (@loaded_cvterms, 72);
 
 my $test_go_file =
   $test_util->root_dir() . '/' . $config->{test_config}->{test_go_obo_file};
@@ -35,7 +35,7 @@ $test_util->load_test_ontologies($ontology_index, 1);
 
 @loaded_cvterms = $schema->resultset('Cvterm')->all();
 
-is(@loaded_cvterms, 131);
+is(@loaded_cvterms, 132);
 
 my $cvprop_rs = $schema->resultset('Cvprop');
 
@@ -60,7 +60,7 @@ my %expected_cv_term_counts = (
 cmp_deeply(\%actual_cv_term_counts,
            \%expected_cv_term_counts);
 
-is(@loaded_cvterms, 131);
+is(@loaded_cvterms, 132);
 
 my @cvterm_relationships = $schema->resultset('CvtermRelationship')
   ->search({}, { join => { subject => 'cv', type => 'cv' } })->all();
@@ -134,8 +134,8 @@ is($results[0]->{doc}->get('term_name'), 'modified residue with a secondary neut
 
 
 # molecular_function with synonym
-my $long_ugly_synonym_query = 'aminobenzoate methenyltransferase activity';
-@results = $ontology_index->lookup('molecular_function', [], $long_ugly_synonym_query, 100);
+my $synonym_query = 'dihydropteroate pyrophosphorylase activity';
+@results = $ontology_index->lookup('molecular_function', [], $synonym_query, 100);
 
 is(@results, 6);
 
@@ -146,7 +146,7 @@ for my $result (@results) {
   is($cv_name, 'molecular_function');
 }
 
-is($results[0]->{doc}->get('text'), '2-amino-4-hydroxy-6-hydroxymethyl-7,8-dihydropteridine-diphosphate:4-aminobenzoate 2-amino-4-hydroxydihydropteridine-6-methenyltransferase activity');
+is($results[0]->{doc}->get('text'), 'dihydropteroate synthase activity');
 is($results[0]->{doc}->get('term_name'), 'dihydropteroate synthase activity');
 
 @results = $ontology_index->lookup('molecular_function', [],
@@ -154,7 +154,7 @@ is($results[0]->{doc}->get('term_name'), 'dihydropteroate synthase activity');
 
 is(@results, 6);
 is($results[0]->{doc}->get('cv_name'), 'molecular_function');
-is($results[0]->{doc}->get('text'), 'dihydropteroate synthetase activity');
+is($results[0]->{doc}->get('text'), 'dihydropteroate synthase activity');
 is($results[0]->{doc}->get('term_name'), 'dihydropteroate synthase activity');
 
 
@@ -178,7 +178,7 @@ $ontology_index = Canto::Track::OntologyIndex->new(config => $config, index_path
 $test_util->load_test_ontologies($ontology_index, 1, 1);
 @loaded_cvterms = $schema->resultset('Cvterm')->all();
 
-is(@loaded_cvterms, 156);
+is(@loaded_cvterms, 158);
 
 ok((grep {
   $_->name() eq 'OBSOLETE FYPO:0002233 viable elongated vegetative cell population'

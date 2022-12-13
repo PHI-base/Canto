@@ -212,6 +212,10 @@ sub setup
 
   $self->{extension_configuration} = \@ext_conf;
 
+  if (!defined $self->{ontology_namespace_config}) {
+    $self->{ontology_namespace_config} = {}
+  }
+
   # make the field_infos available as a hash in the config and make
   # the config inheritable using "extends"
   for my $model (keys %{$self->{class_info}}) {
@@ -357,6 +361,28 @@ sub setup
   if (defined $self->{available_annotation_type_list}) {
     my @available_annotation_type_list =
       @{$self->{available_annotation_type_list}};
+
+    map {
+      if ($_->{category} eq 'genotype_interaction') {
+        my $interaction_annotation_type = $_;
+        my $associated_phenotype_type_name =
+          $interaction_annotation_type->{associated_phenotype_annotation_type};
+        if (!defined $associated_phenotype_type_name) {
+          use Data::Dumper;
+          die 'no associated_phenotype_annotation_type field for configuration: ',
+            Dumper([$interaction_annotation_type]);
+        }
+
+        map {
+          if ($_->{name} eq $associated_phenotype_type_name) {
+            my $associated_phenotype_type = $_;
+
+            $associated_phenotype_type->{associated_interaction_annotation_type} =
+              $interaction_annotation_type;
+          }
+        } @available_annotation_type_list;
+      }
+    } @available_annotation_type_list;
 
     my @annotation_type_list = ();
 
@@ -697,7 +723,7 @@ sub class_info
   return $self->{class_info}->{$model_name};
 }
 
-my @boolean_field_names = qw|description_required allele_name_required allow_expression_change can_have_conditions use_select_element|;
+my @boolean_field_names = qw|description_required allele_name_required allow_expression_change can_have_conditions use_select_element delete_only is_symmetric overexpression_implies_direction|;
 
 sub for_json
 {
@@ -740,6 +766,25 @@ sub get_species_taxon_of_strain_taxon
 
   return $self->{_strain_species_taxon_map}->{$strain_taxon_id} //
     $self->{_reference_strain_taxon_map}->{$strain_taxon_id};
+}
+
+
+=head2 get_annotation_type_by_name
+
+ Usage   : my $annotation_type_config =
+              $config->get_annotation_type_by_name("molecular_function");
+ Function: Get the configuration for a type
+ Returns : a hash of annotation type details
+
+=cut
+
+sub get_annotation_type_by_name
+{
+  my $self = shift;
+
+  my $annotation_type_name = shift;
+
+  return $self->{annotation_types}->{$annotation_type_name};
 }
 
 1;

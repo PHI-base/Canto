@@ -63,6 +63,8 @@ Search for term ID - ontology-name isn't needed
    $0 -v -t ontology 'FYPO:0000114'
 Search for gene name or systematic ID
    $0 -t gene 'cdc11'
+Retreive Chado genotype-genotype interactions for a given publication
+   $0 -t genotype-interaction PMID:1234567
 |;
 
   exit(1);
@@ -93,7 +95,7 @@ if (!Canto::Meta::Util::app_initialised($app_name, $suffix)) {
 
 my $config = Canto::Config::get_config();
 
-my $lookup = Canto::Track::get_adaptor($config, $lookup_type);
+my $lookup = Canto::Track::get_adaptor($config, $lookup_type =~ s/-/_/gr);
 
 if (!defined $lookup) {
   usage("no lookup of type: $lookup_type");
@@ -120,43 +122,69 @@ if ($lookup_type eq 'gene') {
       }
     }
   }
-} else {
-  if ($lookup_type eq 'ontology') {
-    my $search_string = "@ARGV";
+  exit 0;
+}
 
-    if (!defined $ontology_name && $search_string !~ /^\w+:[\w\d]+$/) {
-      usage("no ontology name argument");
+if ($lookup_type eq 'ontology') {
+  my $search_string = "@ARGV";
+
+  if (!defined $ontology_name && $search_string !~ /^\w+:[\w\d]+$/) {
+    usage("no ontology name argument");
+  }
+
+  my $res = [];
+  my @lookup_args = (ontology_name => $ontology_name,
+                     max_results => 20);
+
+  if ($verbose) {
+    push @lookup_args, include_children => 1,
+      include_synonyms => ['exact', 'broad', 'related'];
+  }
+
+  if ($search_string =~ /^\s*:ALL:\s*/) {
+    $res = [$lookup->get_all(@lookup_args)];
+  } else {
+
+    push @lookup_args, search_string => $search_string;
+
+    $res = $lookup->lookup(@lookup_args);
+
+  }
+
+  for my $hit (@$res) {
+    my $synonym_text = '';
+    if (defined $hit->{matching_synonym}) {
+      $synonym_text =
+        q{ (matching synonym: "} . $hit->{matching_synonym} . q{")};
     }
-
-    my @lookup_args = (ontology_name => $ontology_name,
-                       search_string => $search_string,
-                       max_results => 20);
+    print $hit->{id}, " - ", $hit->{name}, "$synonym_text\n";
 
     if ($verbose) {
-      push @lookup_args, include_children => 1,
-        include_synonyms => ['exact', 'broad', 'related'],
-    }
-
-    my $res = $lookup->lookup(@lookup_args);
-
-    for my $hit (@$res) {
-      my $synonym_text = '';
-      if (defined $hit->{matching_synonym}) {
-        $synonym_text =
-          q{ (matching synonym: "} . $hit->{matching_synonym} . q{")};
+      print "  synonyms:\n";
+      for my $synonym (@{$hit->{synonyms}}) {
+        print "    ", $synonym->{name}, " [", $synonym->{type}, "]\n";
       }
-      print $hit->{id}, " - ", $hit->{name}, "$synonym_text\n";
-
-      if ($verbose) {
-        print "  synonyms:\n";
-        for my $synonym (@{$hit->{synonyms}}) {
-          print "    ", $synonym->{name}, " [", $synonym->{type}, "]\n";
-        }
-        print "  child terms:\n";
-        for my $child (@{$hit->{children}}) {
-          print "    ", $child->{name}, " (", $child->{id}, ")\n";
-        }
+      print "  child terms:\n";
+      for my $child (@{$hit->{children}}) {
+        print "    ", $child->{name}, " (", $child->{id}, ")\n";
       }
     }
   }
+  exit 0;
+}
+
+if ($lookup_type eq 'genotype-interaction') {
+  if (@ARGV != 1) {
+    usage (qq|the genotype-interaction lookup type needs exactly one PMID as the
+search term, got: "@ARGV"|);
+  }
+
+  my %args = (
+    pub_uniquename => $ARGV[0],
+    max_results => 10,
+    interaction_type_name => 'genotype_interaction',
+  );
+
+  use Data::Dumper;
+  warn Dumper([$lookup->lookup(\%args)]);
 }

@@ -969,13 +969,15 @@ sub _get_curator_details
   my $curator_manager = $self->curator_manager();
 
   my ($curator_email, $curator_name, $curator_known_as,
-      $accepted_date, $community_curated) =
+      $accepted_date, $community_curated, $creation_date,
+      $curs_curator_id, $curator_orcid) =
         $self->state()->curator_manager()->current_curator($curs_key);
 
   return {
     curator_email => $curator_email,
     curator_name => $curator_name,
     curator_known_as => $curator_known_as,
+    curator_orcid => $curator_orcid,
     accepted_date => $accepted_date,
     # false means that an admin user is doing the curation
     community_curated => $community_curated ? JSON::true : JSON::false,
@@ -1195,6 +1197,8 @@ sub make_annotation
 
   $self->_store_change_hash($new_annotation, $data);
 
+  $self->_update_annotation_interactions($new_annotation, $data, 0);
+
   $self->set_annotation_curator($new_annotation);
   $self->metadata_storer()->store_counts($curs_schema);
 
@@ -1213,6 +1217,47 @@ sub _check_curs_key
   }
 
   delete $details->{key};
+}
+
+sub _store_interaction_annotation_with_phenotypes
+{
+  my $curs_schema = shift;
+  my $interaction_type = shift;
+  my $primary_genotype_annotation_id = shift;
+  my $genotype_a_id = shift;
+  my $genotype_a_phenotype_annotation_id = shift;
+  my $genotype_b_id = shift;
+
+  my $genotype_annotation = $curs_schema->resultset('GenotypeAnnotation')
+    ->find({
+      genotype => $genotype_a_id,
+      annotation => $genotype_a_phenotype_annotation_id,
+    });
+
+  $curs_schema->resultset('GenotypeInteractionWithPhenotype')
+    ->find_or_create({
+      interaction_type => $interaction_type,
+      primary_genotype_annotation_id => $primary_genotype_annotation_id,
+      genotype_annotation_a_id => $genotype_annotation->genotype_annotation_id(),
+      genotype_b_id => $genotype_b_id,
+    });
+}
+
+sub _store_interaction_annotation
+{
+  my $curs_schema = shift;
+  my $interaction_type = shift;
+  my $primary_genotype_annotation_id = shift;
+  my $genotype_a_id = shift;
+  my $genotype_b_id = shift;
+
+  $curs_schema->resultset('GenotypeInteraction')
+    ->find_or_create({
+      interaction_type => $interaction_type,
+      primary_genotype_annotation_id => $primary_genotype_annotation_id,
+      genotype_a_id => $genotype_a_id,
+      genotype_b_id => $genotype_b_id,
+    });
 }
 
 sub _ontology_change_keys
@@ -1393,6 +1438,12 @@ sub _ontology_change_keys
       warn "storing of alleles is not implemented\n";
       return 1;
     },
+    interaction_annotations => sub {
+      return 1;
+    },
+    interaction_annotations_with_phenotypes => sub {
+      return 1;
+    }
   )
 }
 
@@ -1541,10 +1592,110 @@ sub _store_change_hash
       " has no gene or genotype\n";
   }
 
+  $self->_update_annotation_interactions($annotation, $changes, 0);
+
   $annotation->data($data);
   $annotation->update();
 }
 
+
+sub _update_annotation_interactions
+  {
+    my $self = shift;
+    my $annotation = shift;
+    my $changes = shift;
+    my $merge_with_existing = shift;
+
+    if ($annotation->genotype_annotations()->count() > 0) {
+      # only try this for phenotype annotations
+
+      my $primary_genotype_annotation =
+        $annotation->genotype_annotations()->first();
+      my $primary_genotype_annotation_id =
+        $primary_genotype_annotation->genotype_annotation_id();
+
+      my @existing_interactions_without_phenotypes = ();
+      my @existing_interactions_with_phenotypes = ();
+
+      if ($merge_with_existing) {
+
+        my $ontology_lookup =
+          Canto::Track::get_adaptor($self->config(), 'ontology');
+        my $organism_lookup =
+          Canto::Track::get_adaptor($self->config(), 'organism');
+
+        my @existing_interactions =
+          Canto::Curs::Utils::make_interaction_annotations($self->config(),
+                                                           $self->curs_schema(),
+                                                           $annotation,
+                                                           $ontology_lookup,
+                                                           $organism_lookup);
+
+        map {
+          if (exists $_->{genotype_a_phenotype_annotations}) {
+            push @existing_interactions_with_phenotypes, $_;
+          } else {
+            push @existing_interactions_without_phenotypes, $_;
+          }
+        } @existing_interactions;
+      }
+
+      my $interaction_annotations_with_phenotypes =
+        $changes->{interaction_annotations_with_phenotypes};
+
+      if (defined $interaction_annotations_with_phenotypes) {
+        # remove, then re-add interactions without phenotypes
+        $primary_genotype_annotation
+          ->genotype_interactions_with_phenotype_primary_genotype_annotation()
+          ->delete();
+
+
+        map {
+          my $dir_annotation = $_;
+
+          my $interaction_type = $dir_annotation->{interaction_type};
+          my $genotype_a_id = $dir_annotation->{genotype_a}->{genotype_id};
+          my $genotype_b_id = $dir_annotation->{genotype_b}->{genotype_id};
+          map {
+            my $genotype_a_phenotype_id = $_->{annotation_id};
+
+            _store_interaction_annotation_with_phenotypes($self->curs_schema(),
+                                                          $interaction_type,
+                                                          $primary_genotype_annotation_id,
+                                                          $genotype_a_id,
+                                                          $genotype_a_phenotype_id,
+                                                          $genotype_b_id);
+
+          } @{$dir_annotation->{genotype_a_phenotype_annotations}};
+        } (@existing_interactions_with_phenotypes, @$interaction_annotations_with_phenotypes);
+
+      }
+
+
+      my $interaction_annotations =
+        $changes->{interaction_annotations};
+
+      if (defined $interaction_annotations) {
+        $primary_genotype_annotation->genotype_interactions()->delete();
+
+        map {
+          my $interaction_annotation = $_;
+
+          my $interaction_type = $interaction_annotation->{interaction_type};
+          my $genotype_a_id = $interaction_annotation->{genotype_a}->{genotype_id};
+          my $genotype_b_id = $interaction_annotation->{genotype_b}->{genotype_id};
+
+          _store_interaction_annotation($self->curs_schema(),
+                                        $interaction_type,
+                                        $primary_genotype_annotation_id,
+                                        $genotype_a_id,
+                                        $genotype_b_id);
+
+        } (@existing_interactions_without_phenotypes, @$interaction_annotations);
+
+      }
+    }
+  }
 
 sub _category_from_type
 {
@@ -1582,10 +1733,6 @@ sub _make_error
                                              $changes);
  Function: Change an annotation in the Curs database based on the $changes hash.
  Args    : $annotation_id
-           $status - 'new' if the annotation ID refers to a user created
-                      annotation
-                     'existing' if the ID refers to a existing Chado/external
-                     ID, probably a feature_id
            $changes - a hash that specifies which parts of the annotation are
                       to change, with these possible keys:
                       comment - set the comment
@@ -1597,29 +1744,46 @@ sub change_annotation
 {
   my $self = shift;
   my $annotation_id = shift;
-  my $annotation_status = shift;
-
-  my $curs_schema = $self->curs_schema();
-
-  $curs_schema->txn_begin();
 
   my $changes = shift;
 
-  try {
-    my $pub_id = $self->get_metadata($curs_schema, 'curation_pub_id');
-    my $pub = $curs_schema->resultset('Pub')->find($pub_id);
+  my $curs_schema = $self->curs_schema();
 
-    my $annotation = undef;
+  my $pub_id = $self->get_metadata($curs_schema, 'curation_pub_id');
+  my $pub = $curs_schema->resultset('Pub')->find($pub_id);
 
-    if ($annotation_status eq 'new') {
-      $annotation = $curs_schema->resultset('Annotation')->find($annotation_id);
-    } else {
-      die "annotation status unsupported: $annotation_status\n";
+  my $annotation = $curs_schema->resultset('Annotation')->find($annotation_id);
+  my $annotation_type_name = $annotation->type();
+  my $category = $self->_category_from_type($annotation_type_name);
+
+  if ($category eq 'ontology') {
+    my $details =
+      Canto::Curs::Utils::make_ontology_annotation($self->config(),
+                                                   $curs_schema, $annotation);
+
+    my %details_for_find = (%$details, %$changes);
+
+    my $existing_annotation = $self->find_existing_annotation(\%details_for_find);
+
+    if (defined $existing_annotation) {
+      $self->_update_annotation_interactions($existing_annotation, $changes, 1);
+
+      my $existing_annotation_hash =
+        Canto::Curs::Utils::make_ontology_annotation($self->config(),
+                                                     $curs_schema,
+                                                     $existing_annotation);
+
+      return { status => 'existing',
+               annotation => $existing_annotation_hash };
     }
+  }
 
+  $curs_schema->txn_begin();
+
+  try {
     my $orig_metagenotype = undef;
 
-    my $annotation_config = $self->config()->{annotation_types}->{$annotation->type()};
+    my $annotation_config = $self->config()->{annotation_types}->{$annotation_type_name};
 
     if ($annotation_config->{category} eq 'interaction' &&
       $annotation_config->{feature_type} eq 'metagenotype') {
@@ -1656,7 +1820,8 @@ sub change_annotation
       $annotation_hash =
         Canto::Curs::Utils::make_ontology_annotation($self->config(),
                                                      $curs_schema,
-                                                     $annotation);
+                                                     $annotation, undef, undef,
+                                                     1, 1);
     } else {
       $annotation_hash =
         Canto::Curs::Utils::make_interaction_annotation($self->config(),
@@ -1677,6 +1842,177 @@ sub change_annotation
     return _make_error($_);
   };
 }
+
+sub safe_equals
+{
+  my $a = shift;
+  my $b = shift;
+
+  if (ref $a or ref $b) {
+    die;
+  } else {
+    if (!defined $a and !defined $b) {
+      return 1;
+    } else {
+      if (defined $a and defined $b) {
+        return $a eq $b
+      } else {
+        return 0;
+      }
+    }
+  }
+}
+
+sub conditions_equal
+{
+  my $self = shift;
+
+  my $existing_conditions = shift // [];
+  my $new_conditions = shift // [];
+
+  my @existing_condition_names = sort map {
+    $self->_term_name_from_id($_) // $_;
+  } @$existing_conditions;
+
+  my @new_condition_names = sort map {
+    $_->{name};
+  } @$new_conditions;
+
+  return (join ":::", @existing_condition_names) eq (join ":::", @new_condition_names);
+}
+
+sub extension_equal
+{
+  my $existing_extension = shift // [];
+  my $new_extension = shift // [];
+
+  if (@$existing_extension > 1 || @$new_extension > 1) {
+    # give up because one of the annotations has an "independent
+    # extension" and was created by an admin
+    return 0;
+  }
+
+  if (@$existing_extension == 0 && @$new_extension == 0) {
+    return 1;
+  }
+
+  if (@$existing_extension == 0 || @$new_extension == 0) {
+    return 0
+  }
+
+  my @existing_and_parts = @{$existing_extension->[0]};
+  my @new_and_parts = @{$new_extension->[0]};
+
+  if (scalar(@existing_and_parts) != scalar(@new_and_parts)) {
+    return 0;
+  }
+
+  my $sorter = sub {
+    my $a = shift;
+    my $b = shift;
+
+    ($a->{relation} // 'UNKNOWN') cmp ($b->{relation} // 'UNKNOWN')
+      ||
+    ($a->{rangeType} // 'UNKNOWN') cmp ($b->{rangeType} // 'UNKNOWN')
+      ||
+    ($a->{rangeValue} // 'UNKNOWN') cmp ($b->{rangeValue} // 'UNKNOWN')
+  };
+
+  my @sorted_existing_and_parts = sort {
+    $sorter->($a, $b);
+  } @existing_and_parts;
+
+  my @sorted_new_and_parts = sort {
+    $sorter->($a, $b);
+  } @new_and_parts;
+
+  for (my $i = 0; $i < @sorted_new_and_parts; $i++) {
+    my $new_part = $sorted_new_and_parts[$i];
+    my $existing_part = $sorted_existing_and_parts[$i];
+    if ($new_part->{relation} ne $existing_part->{relation} ||
+        $new_part->{rangeType} ne $existing_part->{rangeType} ||
+        $new_part->{rangeValue} ne $existing_part->{rangeValue}) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+
+sub find_existing_annotation
+{
+  my $self = shift;
+
+  my $details = shift;
+
+  my $curs_schema = $self->curs_schema();
+
+  my $annotation_type_name = $details->{annotation_type};
+  my $annotation_type =
+    $self->config()->get_annotation_type_by_name($annotation_type_name);
+
+  my $feature_id = $details->{feature_id};
+  my $feature_type = $details->{feature_type};
+  my $term_ontid = $details->{term_ontid};
+
+  my $base_rs;
+
+  if ($feature_type eq 'gene') {
+    $base_rs = $curs_schema->resultset('GeneAnnotation');
+  } else {
+    if ($feature_type eq 'genotype') {
+      $base_rs = $curs_schema->resultset('GenotypeAnnotation');
+    } else {
+      if ($feature_type eq 'metagenotype') {
+        $base_rs = $curs_schema->resultset('MetagenotypeAnnotation');
+      } else {
+        return undef;
+      }
+    }
+  }
+
+  my $rs = $base_rs->search(
+    {
+      $feature_type => $feature_id,
+      'annotation.type' => $annotation_type_name,
+    },
+    {
+      prefetch => 'annotation'
+    });
+
+  while (defined (my $row = $rs->next())) {
+    my $existing_annotation = $row->annotation();
+
+    if (defined $details->{annotation_id} &&
+        $existing_annotation->annotation_id() == $details->{annotation_id}) {
+      next;
+    }
+
+    my $existing_data = $existing_annotation->data();
+
+    if ($existing_data->{term_ontid} ne $term_ontid) {
+      next;
+    }
+    if ($existing_data->{evidence_code} ne $details->{evidence_code}) {
+      next;
+    }
+    if (!safe_equals($existing_data->{with_gene_id}, $details->{with_gene_id})) {
+      next;
+    }
+    if (!extension_equal($existing_data->{extension}, $details->{extension})) {
+      next;
+    }
+    if (!$self->conditions_equal($existing_data->{conditions}, $details->{conditions})) {
+      next;
+    }
+
+    return $existing_annotation;
+  }
+
+  return undef;
+}
+
 
 =head2
 
@@ -1710,6 +2046,25 @@ sub create_annotation
   }
 
   my $curs_schema = $self->curs_schema();
+
+  my $category = $self->_category_from_type($annotation_type);
+
+  if ($category eq 'ontology') {
+    my $existing_annotation = $self->find_existing_annotation($details);
+
+    if (defined $existing_annotation) {
+      $self->_update_annotation_interactions($existing_annotation, $details, 1);
+
+      my $existing_annotation_hash =
+        Canto::Curs::Utils::make_ontology_annotation($self->config(),
+                                                     $curs_schema,
+                                                     $existing_annotation);
+
+      return { status => 'existing',
+               annotation => $existing_annotation_hash };
+    }
+  }
+
   $curs_schema->txn_begin();
 
   try {
@@ -1721,16 +2076,16 @@ sub create_annotation
 
     my $annotation_hash = undef;
 
-    if ($self->_category_from_type($annotation_type) eq 'ontology') {
+    if ($category eq 'ontology') {
       $annotation_hash =
         Canto::Curs::Utils::make_ontology_annotation($self->config(),
                                                      $curs_schema,
                                                      $annotation);
     } else {
       $annotation_hash =
-        Canto::Curs::Utils::make_interaction_annotation($self->config(),
-                                                        $curs_schema,
-                                                        $annotation);
+        Canto::Curs::Utils::make_gene_interaction_annotation($self->config(),
+                                                             $curs_schema,
+                                                             $annotation);
     }
 
     $self->metadata_storer()->store_counts($curs_schema);
@@ -1767,13 +2122,32 @@ sub delete_annotation
   my $details = shift;
 
   my $curs_schema = $self->curs_schema();
+
+  my $annotation_id = $details->{annotation_id};
+  my $annotation = $curs_schema->find_with_type('Annotation', $annotation_id);
+
+  for my $genotype_annotation ($annotation->genotype_annotations()) {
+    my $interaction =
+      $genotype_annotation->genotype_interactions_with_phenotype_primary_genotype_annotation()->first()
+      //
+      $genotype_annotation->genotype_interactions_with_phenotype_genotype_annotation_a()->first()
+      //
+      $genotype_annotation->genotype_interactions()->first();
+
+    if ($interaction) {
+      return {
+        message => 'this annotation is used by a ' .
+        $interaction->interaction_type() .
+        ' interaction',
+        status => 'error',
+      };
+    }
+  }
+
   $curs_schema->txn_begin();
 
   try {
     $self->_check_curs_key($details);
-
-    my $annotation_id = $details->{annotation_id};
-    my $annotation = $curs_schema->find_with_type('Annotation', $annotation_id);
 
     my @metagenotype_annotations = $annotation->metagenotype_annotations()
       ->search({}, { prefetch => 'metagenotype' })

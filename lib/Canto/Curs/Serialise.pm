@@ -172,6 +172,80 @@ sub _get_metagenotype_by_id
     ->find({ metagenotype_id => $metagenotype_id });
 }
 
+
+sub _get_genotype_interactions_no_phenotype
+{
+  my $annotation = shift;
+
+  my $interaction_rs = $annotation->genotype_annotations()
+    ->search_related('genotype_interactions')
+    ->search({},
+                {
+                  prefetch => ['genotype_a', 'genotype_b'],
+                });
+
+  my @interactions = ();
+
+  while (defined (my $interaction_row = $interaction_rs->next())) {
+    my $genotype_a = $interaction_row->genotype_a();
+    my $genotype_b = $interaction_row->genotype_b();
+
+    push @interactions,
+      {
+        interaction_type => $interaction_row->interaction_type(),
+        genotype_a => $genotype_a->identifier(),
+        genotype_b => $genotype_b->identifier(),
+      };
+  }
+
+  return @interactions;
+}
+
+sub _get_genotype_interactions_with_phenotype
+{
+  my $annotation = shift;
+
+  my $interaction_rs = $annotation->genotype_annotations()
+    ->search_related('genotype_interactions_with_phenotype_primary_genotype_annotation')
+    ->search({},
+                {
+                  prefetch => [
+                    {
+                      genotype_annotation_a => [
+                        ['genotype', 'annotation'],
+                      ]
+                    },
+                    'genotype_b'
+                  ],
+                });
+
+  my @interactions = ();
+
+  while (defined (my $interaction_row = $interaction_rs->next())) {
+    my $genotype_annotation_a = $interaction_row->genotype_annotation_a();
+    my $genotype_a = $genotype_annotation_a->genotype();
+    my $genotype_b = $interaction_row->genotype_b();
+
+    my $genotype_annotation_a_annotation = $genotype_annotation_a->annotation();
+
+    my $annotation_a_data = $genotype_annotation_a_annotation->data();
+
+    my $phenotype_termid = $annotation_a_data->{term_ontid};
+
+
+    push @interactions,
+      {
+        interaction_type => $interaction_row->interaction_type(),
+        genotype_a => $genotype_a->identifier(),
+        genotype_b => $genotype_b->identifier(),
+        genotype_a_phenotype_termid => $phenotype_termid,
+        genotype_a_phenotype_extension => $annotation_a_data->{extension},
+      };
+  }
+
+  return @interactions;
+}
+
 sub _get_annotations
 {
   my $config = shift;
@@ -230,7 +304,6 @@ sub _get_annotations
     );
 
     if (defined $data{curator}) {
-      delete $data{email};
       if (defined $data{curator}->{community_curated}) {
         if ($data{curator}->{community_curated}) {
           # make sure that we have "true" in the JSON output, not "1"
@@ -270,7 +343,6 @@ sub _get_annotations
 
       if (exists $current->{email}) {
         # curator section
-        delete $current->{email};
         if (!$options->{export_curator_names}) {
           delete $current->{name};
         }
@@ -294,6 +366,21 @@ sub _get_annotations
         }
       }
     } %data;
+
+
+    my @genotype_interactions_no_phenotype =
+      _get_genotype_interactions_no_phenotype($annotation);
+
+    if (@genotype_interactions_no_phenotype) {
+      $data{genotype_interactions_no_phenotype} = \@genotype_interactions_no_phenotype;
+    }
+
+    my @genotype_interactions_with_phenotype =
+      _get_genotype_interactions_with_phenotype($annotation);
+
+    if (@genotype_interactions_with_phenotype) {
+      $data{genotype_interactions_with_phenotype} = \@genotype_interactions_with_phenotype;
+    }
 
     if (!$data{extension} || @{$data{extension}} == 0) {
       push @ret, \%data;
@@ -690,6 +777,8 @@ sub _get_pubs
 
 sub _get_curators_from_annotations
 {
+  my $curs_key = shift;
+  my $curator_manager = shift;
   my $annotations_ref = shift;
   my @annotations = @$annotations_ref;
 
@@ -704,10 +793,31 @@ sub _get_curators_from_annotations
       if ($curator->{community_curated} == JSON::true) {
         $has_community_annotation = JSON::true;
       }
-      if (defined $curator->{name}) {
-        $annotation_curators{$curator->{name}}->{annotation_count}++;
-        $annotation_curators{$curator->{name}}->{community_curator} =
+      my $name = $curator->{name};
+
+      # we need the email for looking up the ORCID but we don't want to include
+      # it in the JSON output
+      my $curator_email = delete $curator->{email};
+
+      if (defined $name) {
+        $annotation_curators{$name}->{annotation_count}++;
+        $annotation_curators{$name}->{community_curator} =
           $curator->{community_curated};
+
+        my $curator_orcid = $curator->{curator_orcid};
+
+        if (!defined $curator_orcid) {
+
+          if (defined $curator_email) {
+            my ($curator_email, $curator_name, $curator_known_as, $curator_orcid) =
+              $curator_manager->curator_details_by_email($curator_email);
+
+            if (defined $curator_orcid && $curator_orcid =~ m|.*?(\d\d\d\d-\d\d\d\d-\d\d\d\d-\d\d\d[\dX]$)|) {
+              # remove any prefixes
+              $annotation_curators{$name}->{curator_orcid} = $1;
+            }
+          }
+        }
       }
     }
   } @annotations;
@@ -717,11 +827,13 @@ sub _get_curators_from_annotations
       my $name = $_;
       my $count = $annotation_curators{$name}->{annotation_count};
       my $community = $annotation_curators{$name}->{community_curator};
+      my $orcid = $annotation_curators{$name}->{curator_orcid};
 
       {
         name => $name,
         annotation_count => $count,
         community_curator => $community,
+        orcid => $orcid,
       };
     } sort keys %annotation_curators;
 
@@ -776,6 +888,9 @@ sub perl
   my $options = shift;
   my $curs_status = shift;
 
+  my $curator_manager =
+    Canto::Track::CuratorManager->new(config => $config);
+
   my $curs_schema =
     Canto::Curs::get_schema_for_key($config, $curs_key,
                                     {
@@ -799,7 +914,8 @@ sub perl
     $ret{annotations} = _get_annotations($config, $track_schema, $curs_schema, $options);
 
     my ($has_community_annotation, $annotation_curators) =
-      _get_curators_from_annotations($ret{annotations});
+      _get_curators_from_annotations($curs_key, $curator_manager,
+                                     $ret{annotations});
 
     $ret{metadata}{has_community_curation} = $has_community_annotation;
 

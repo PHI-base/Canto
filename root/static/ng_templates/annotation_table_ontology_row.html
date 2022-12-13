@@ -83,6 +83,19 @@
                                link-label="..."></initially-hidden-text>
       </div>
     </span>
+
+    <div class="curs-annotation-table-view-edit-interactions"
+         ng-if="interactionViewLinkVisible()">
+      <div ng-if="genotypeInteractionCount() == 0">
+        Associated genetic interactions (0) -
+        <a ng-click="viewEditInteractions()">add ...</a>
+      </div>
+      <div ng-if="genotypeInteractionCount() != 0">
+        Associated genetic interactions ({{genotypeInteractionCount()}}) -
+        <a ng-click="viewEditInteractions()">view or add ...</a>
+      </div>
+    </div>
+
   </td>
   <td ng-if="!data.hideColumns.term_ontid" ng-class="{ 'term-warning': annotation.is_obsolete_term }">
     {{annotation.term_ontid}}
@@ -144,7 +157,7 @@
            href="{{featureLink('metagenotype', annotation.metagenotype_id)}}">View metagenotype</a>
       </div>
       <div>
-        <a title="Edit this annotation" ng-click="edit()">Edit</a>
+        <a title="Edit this annotation" ng-if="showEditLink" ng-click="edit()">Edit</a>
       </div>
       <div ng-if="showTransferLink">
         <a title="{{'Copy this annotation to other ' + annotationType.feature_type + 's'}}"
@@ -152,6 +165,7 @@
       </div>
       <div>
         <a title="Make copy of this annotation and then edit the details"
+           ng-if="showEditLink"
            ng-click="duplicate()">Copy and edit</a>
       </div>
       <div>
